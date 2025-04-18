@@ -3,5 +3,5 @@ services:
     name: astroloji-api
     env: python
     buildCommand: pip install -r requirements.txt
-    startCommand: bash startup.sh
+    startCommand: python app.py
     autoDeploy: true
