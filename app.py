@@ -1,29 +1,30 @@
-from flask import Flask, jsonify
-import requests
+from flask import Flask, request, jsonify
 import openai
 import os
+import requests
 
 app = Flask(__name__)
-
 openai.api_key = os.getenv("OPENAI_API_KEY")
-RAPID_API_KEY = os.getenv("RAPID_API_KEY")
+
+RAPID_API_KEY = os.getenv("RAPIDAPI_KEY")
 RAPID_API_HOST = "best-daily-astrology-and-horoscope-api.p.rapidapi.com"
 
 @app.route("/translated-horoscope/<sign>", methods=["GET"])
 def get_translated_horoscope(sign):
     try:
-        url = f"https://{RAPID_API_HOST}/api/Detailed-Horoscope/"
+        url = "https://best-daily-astrology-and-horoscope-api.p.rapidapi.com/api/Detailed-Horoscope/"
+        params = {"zodiacSign": sign.lower()}
         headers = {
             "X-RapidAPI-Key": RAPID_API_KEY,
             "X-RapidAPI-Host": RAPID_API_HOST
         }
-        params = {"zodiacSign": sign.lower()}
 
         response = requests.get(url, headers=headers, params=params)
         data = response.json()
 
-        # Hatalı alan "horoscope" değil, "prediction" kullanılmalı
-        english_text = data.get("prediction", "")
+        print("API response:", data)  # Debug amaçlı log
+
+        english_text = data.get("prediction") or data.get("horoscope") or str(data)
 
         if not english_text:
             return jsonify({"error": "No horoscope data returned"}), 400
@@ -32,7 +33,7 @@ def get_translated_horoscope(sign):
         chat_response = openai.ChatCompletion.create(
             model="gpt-3.5-turbo",
             messages=[
-                {"role": "system", "content": "You are a helpful assistant that translates astrology predictions from English to Turkish."},
+                {"role": "system", "content": "You are a helpful assistant who translates astrology texts into Turkish."},
                 {"role": "user", "content": f"Translate this horoscope to Turkish:\n\n{english_text}"}
             ]
         )
