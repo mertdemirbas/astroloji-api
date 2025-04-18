@@ -51,6 +51,7 @@ def daily_horoscope(sign):
     jd = swe.julday(today.year, today.month, today.day)
     sun_pos = swe.calc_ut(jd, swe.SUN)[0]
 
+
     sun_sign = get_sun_sign(sun_pos)
 
     if sign.lower() != sun_sign.lower():
