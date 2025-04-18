@@ -1,7 +1,9 @@
 import openai  # eğer yukarıda yoksa
+import os
 
 # OpenAI API key’in
-openai.api_key = "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"
+
+openai.api_key = os.getenv("OPENAI_API_KEY")
 
 # RapidAPI bilgilerin
 RAPID_API_KEY = "83994d9cc9msh8404adef81063ffp1f7f85jsnef6d3304c8dd"
