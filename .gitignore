@@ -1,0 +1,13 @@
+# Ephemeris verileri (yüksek boyutlu)
+ephe/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# VSCode ayarları (isteğe bağlı)
+.vscode/
+
+# Mac/Windows sistem dosyaları
+.DS_Store
+Thumbs.db
