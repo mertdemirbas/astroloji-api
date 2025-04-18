@@ -1,12 +1,13 @@
 from flask import Flask, request, jsonify
 import openai
-import os
 import requests
+import os
 
 app = Flask(__name__)
-openai.api_key = os.getenv("OPENAI_API_KEY")
 
-RAPID_API_KEY = "83994d9cc9msh8404adef81063ffp1f7f85jsnef6d3304c8dd"
+# API anahtarlarını ortam değişkenlerinden al
+openai.api_key = os.getenv("OPENAI_API_KEY")
+RAPID_API_KEY = os.getenv("RAPID_API_KEY")
 RAPID_API_HOST = "best-daily-astrology-and-horoscope-api.p.rapidapi.com"
 
 @app.route("/translated-horoscope/<sign>", methods=["GET"])
@@ -21,8 +22,8 @@ def get_translated_horoscope(sign):
 
         response = requests.get(url, headers=headers, params=params)
         data = response.json()
-        english_text = data.get("prediction", "")
 
+        english_text = data.get("prediction", "")
         if not english_text:
             return jsonify({"error": "No horoscope data returned"}), 400
 
@@ -45,8 +46,6 @@ def get_translated_horoscope(sign):
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-
-# 🔽 Eksik olan blok burasıydı — eklendi:
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
-    app.run(debug=True, host="0.0.0.0", port=port)
+    app.run(host="0.0.0.0", port=port)
