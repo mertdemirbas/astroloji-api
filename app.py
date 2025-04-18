@@ -1,5 +1,8 @@
-import openai  # eğer yukarıda yoksa
+from flask import Flask, request, jsonify
+import openai
 import os
+
+app = Flask(__name__)  # 💥 Bu satır en üstte olmalı
 
 # OpenAI API key’in
 
