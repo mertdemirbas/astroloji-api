@@ -4,8 +4,9 @@ import os
 import requests
 
 app = Flask(__name__)
-openai.api_key = os.getenv("OPENAI_API_KEY")
 
+# API key'leri environment değişkenlerinden alıyoruz
+openai.api_key = os.getenv("OPENAI_API_KEY")
 RAPID_API_KEY = os.getenv("RAPIDAPI_KEY")
 RAPID_API_HOST = "best-daily-astrology-and-horoscope-api.p.rapidapi.com"
 
@@ -19,15 +20,17 @@ def get_translated_horoscope(sign):
             "X-RapidAPI-Host": RAPID_API_HOST
         }
 
+        # RapidAPI'den veriyi çek
         response = requests.get(url, headers=headers, params=params)
         data = response.json()
 
-        print("API response:", data)  # Debug amaçlı log
+        print("API Response:", data)  # Debug için loglama
 
-        english_text = data.get("prediction") or data.get("horoscope") or str(data)
+        # Hangi alan varsa onu al
+        english_text = data.get("prediction") or data.get("horoscope") or ""
 
         if not english_text:
-            return jsonify({"error": "No horoscope data returned"}), 400
+            return jsonify({"error": "No horoscope data returned", "raw": data}), 400
 
         # OpenAI ile Türkçeye çevir
         chat_response = openai.ChatCompletion.create(
