@@ -92,15 +92,14 @@ def natal_chart():
     try:
         data = request.json
 
-        date = data.get("date")          # "1994-09-15"
-        time = data.get("time")          # "15:30"
-        lat = data.get("lat")
-        lon = data.get("lon")
-        tz_raw = data.get("tz", "+03:00")
+        date = data.get("date")
+        time = data.get("time")
+        lat = str(float(data.get("lat")))
+        lon = str(float(data.get("lon")))
+        tz_raw = str(float(data.get("tz", 3.0)))  # Saat dilimini düz sayı gibi parse et, string olarak geçir
 
-        # Flatlib GeoPos string format istiyor
-        location = GeoPos(str(float(lat)), str(float(lon)))
-        dt = Datetime(date, time, str(tz_raw))
+        location = GeoPos(lat, lon)
+        dt = Datetime(date, time, tz_raw)
 
         chart = Chart(dt, location)
 
@@ -125,7 +124,7 @@ def natal_chart():
             "chart": result,
             "date": date,
             "time": time,
-            "timezone": str(tz_raw)
+            "timezone": tz_raw
         })
 
     except Exception as e:
