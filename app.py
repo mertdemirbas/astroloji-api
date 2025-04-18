@@ -7,7 +7,7 @@ app = Flask(__name__)
 
 # API key'leri environment değişkenlerinden alıyoruz
 openai.api_key = os.getenv("OPENAI_API_KEY")
-RAPID_API_KEY = os.getenv("RAPIDAPI_KEY")
+RAPID_API_KEY = os.getenv("RAPID_API_KEY")
 RAPID_API_HOST = "best-daily-astrology-and-horoscope-api.p.rapidapi.com"
 
 @app.route("/translated-horoscope/<sign>", methods=["GET"])
