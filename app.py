@@ -6,8 +6,10 @@ import datetime
 app = Flask(__name__)
 CORS(app)
 
+# Swiss Ephemeris veri dosyalarının yolu
 swe.set_ephe_path("./ephe")
 
+# Hesaplanacak gezegenler
 PLANETS = {
     'Sun': swe.SUN,
     'Moon': swe.MOON,
@@ -35,7 +37,7 @@ def natal_chart():
 
         positions = {}
         for name, planet_id in PLANETS.items():
-            lon, _lat, _speed = swe.calc_ut(jd, planet_id)
+            lon, _ = swe.calc_ut(jd, planet_id)  # sadece iki değer döner (lon, info)
             positions[name] = round(lon, 2)
 
         return jsonify({
@@ -49,13 +51,12 @@ def natal_chart():
 def daily_horoscope(sign):
     today = datetime.datetime.utcnow()
     jd = swe.julday(today.year, today.month, today.day)
-    sun_pos = swe.calc_ut(jd, swe.SUN)[0]
-
+    sun_pos = swe.calc_ut(jd, swe.SUN)[0]  # sadece dereceyi al
 
     sun_sign = get_sun_sign(sun_pos)
 
     if sign.lower() != sun_sign.lower():
-        message = f"Güneş bugün {sun_sign} burcunda, fakat senin burcun {sign.title()}"
+        message = f"Güneş bugün {sun_sign} burcunda, fakat senin burcun {sign.title()}."
     else:
         message = f"Bugün Güneş senin burcunda ({sign.title()}), bu enerji seni destekliyor!"
 
