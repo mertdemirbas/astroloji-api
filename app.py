@@ -96,7 +96,8 @@ def natal_chart():
         time = data.get("time")          # "15:30"
         lat = float(data.get("lat"))     # örn: 41.0082
         lon = float(data.get("lon"))     # örn: 28.9784
-        tz = data.get("tz", "+03:00")    # saat dilimi (varsayılan: Türkiye)
+        tz_raw = data.get("tz", "+03:00")  # string veya float olabilir
+        tz = str(tz_raw) if not isinstance(tz_raw, str) else tz_raw  # her durumda string'e çevir
 
         location = GeoPos(str(lat), str(lon))
         dt = Datetime(date, time, tz)
