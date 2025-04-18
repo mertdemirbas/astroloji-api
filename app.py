@@ -1,12 +1,16 @@
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
 import os
 import requests
 from openai import OpenAI
+from flatlib.chart import Chart
+from flatlib.datetime import Datetime
+from flatlib.geopos import GeoPos
+from flatlib import const
 
 app = Flask(__name__)
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-# 1. Horoscope App API
+# 1. Horoscope App API (İngilizce)
 def fetch_from_horoscope_app_api(sign):
     try:
         url = f"https://horoscope-app-api.vercel.app/api/v1/get-horoscope/daily?sign={sign}&day=today"
@@ -18,7 +22,7 @@ def fetch_from_horoscope_app_api(sign):
         return None, None
     return None, None
 
-# 2. Aztro API (POST)
+# 2. Aztro API (İngilizce)
 def fetch_from_aztro_api(sign):
     try:
         url = f"https://aztro.sameerkumar.website/?sign={sign}&day=today"
@@ -46,7 +50,6 @@ def fetch_from_burc_yorumlari(sign):
 @app.route("/translated-horoscope/<sign>", methods=["GET"])
 def get_translated_horoscope(sign):
     try:
-        # Kaynaklardan veri çek
         sources = [fetch_from_horoscope_app_api, fetch_from_aztro_api, fetch_from_burc_yorumlari]
         text, lang = None, None
 
@@ -65,7 +68,6 @@ def get_translated_horoscope(sign):
                 "translated": text
             })
 
-        # İngilizce metni Türkçeye çevir
         response = client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[
@@ -84,6 +86,49 @@ def get_translated_horoscope(sign):
 
     except Exception as e:
         return jsonify({"error": f"Translation failed: {str(e)}"}), 500
+
+@app.route("/natal-chart", methods=["POST"])
+def natal_chart():
+    try:
+        data = request.json
+
+        date = data.get("date")          # "1994-09-15"
+        time = data.get("time")          # "15:30"
+        lat = float(data.get("lat"))     # örn: 41.0082
+        lon = float(data.get("lon"))     # örn: 28.9784
+        tz = data.get("tz", "+03:00")    # saat dilimi (varsayılan: Türkiye)
+
+        location = GeoPos(str(lat), str(lon))
+        dt = Datetime(date, time, tz)
+
+        chart = Chart(dt, location)
+
+        planets = [
+            const.SUN, const.MOON, const.MERCURY, const.VENUS, const.MARS,
+            const.JUPITER, const.SATURN, const.URANUS, const.NEPTUNE, const.PLUTO,
+            const.ASC, const.MC
+        ]
+
+        result = []
+        for obj_name in planets:
+            obj = chart.get(obj_name)
+            result.append({
+                "name": obj.id,
+                "sign": obj.sign,
+                "house": obj.house,
+                "longitude": obj.lon,
+                "retrograde": obj.retrograde
+            })
+
+        return jsonify({
+            "chart": result,
+            "date": date,
+            "time": time,
+            "timezone": tz
+        })
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
