@@ -94,16 +94,14 @@ def natal_chart():
 
         date = data.get("date")          # "1994-09-15"
         time = data.get("time")          # "15:30"
-        lat = float(data.get("lat"))     # örn: 41.0082
-        lon = float(data.get("lon"))     # örn: 28.9784
-        tz_raw = data.get("tz", 3)       # örn: "+03:00" veya 3
+        lat = float(data.get("lat"))     # 41.0082
+        lon = float(data.get("lon"))     # 28.9784
+        tz_raw = data.get("tz", 3)       # "+03:00" veya 3
 
-        # Flatlib GeoPos string format istiyor
         location = GeoPos(str(lat), str(lon))
 
-        # Timezone int olmalı, float veya string değil
+        # Flatlib sadece int timezone kabul eder, float/string değil
         tz = int(float(tz_raw))
-
         dt = Datetime(date, time, tz)
 
         chart = Chart(dt, location)
@@ -134,7 +132,6 @@ def natal_chart():
 
     except Exception as e:
         return jsonify({"error": str(e)}), 400
-
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
