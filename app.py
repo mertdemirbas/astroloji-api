@@ -98,7 +98,7 @@ def natal_chart():
         lon = float(data.get("lon"))     # 28.9784
         tz_raw = data.get("tz", 3)       # "+03:00" veya 3
 
-        location = GeoPos(str(lat), str(lon))
+        location = GeoPos(f"{float(lat):.4f}", f"{float(lon):.4f}")
 
         # Flatlib sadece int timezone kabul eder, float/string değil
         tz = int(float(tz_raw))
