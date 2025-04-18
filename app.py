@@ -1,80 +1,46 @@
-from flask import Flask, request, jsonify
-from flask_cors import CORS
-import swisseph as swe
-import datetime
+import openai  # eğer yukarıda yoksa
 
-app = Flask(__name__)
-CORS(app)
+# OpenAI API key’in
+openai.api_key = "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"
 
-# Swiss Ephemeris veri dosyalarının yolu
-swe.set_ephe_path("./ephe")
+# RapidAPI bilgilerin
+RAPID_API_KEY = "83994d9cc9msh8404adef81063ffp1f7f85jsnef6d3304c8dd"
+RAPID_API_HOST = "best-daily-astrology-and-horoscope-api.p.rapidapi.com"
 
-# Hesaplanacak gezegenler
-PLANETS = {
-    'Sun': swe.SUN,
-    'Moon': swe.MOON,
-    'Mercury': swe.MERCURY,
-    'Venus': swe.VENUS,
-    'Mars': swe.MARS,
-    'Jupiter': swe.JUPITER,
-    'Saturn': swe.SATURN
-}
-
-@app.route("/natal-chart", methods=["POST"])
-def natal_chart():
-    data = request.json
+@app.route("/translated-horoscope/<sign>", methods=["GET"])
+def get_translated_horoscope(sign):
     try:
-        date = data["date"]
-        time = data["time"]
-        lat = float(data["lat"])
-        lon = float(data["lon"])
+        # 1. RapidAPI'den İngilizce yorum al
+        url = "https://best-daily-astrology-and-horoscope-api.p.rapidapi.com/api/Detailed-Horoscope/"
+        params = {"zodiacSign": sign.lower()}
+        headers = {
+            "X-RapidAPI-Key": RAPID_API_KEY,
+            "X-RapidAPI-Host": RAPID_API_HOST
+        }
 
-        year, month, day = map(int, date.split("-"))
-        hour, minute = map(int, time.split(":"))
-        decimal_hour = hour + minute / 60.0
+        response = requests.get(url, headers=headers, params=params)
+        data = response.json()
+        english_text = data.get("horoscope", "")
 
-        jd = swe.julday(year, month, day, decimal_hour)
+        if not english_text:
+            return jsonify({"error": "No horoscope data returned"}), 400
 
-        positions = {}
-        for name, planet_id in PLANETS.items():
-            lon, _ = swe.calc_ut(jd, planet_id)  # sadece iki değer döner (lon, info)
-            positions[name] = round(lon, 2)
+        # 2. OpenAI ile Türkçeye çevir
+        chat_response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant who translates astrology texts into Turkish."},
+                {"role": "user", "content": f"Translate this horoscope to Turkish:\n\n{english_text}"}
+            ]
+        )
+
+        translated = chat_response["choices"][0]["message"]["content"]
 
         return jsonify({
-            "julian_day": jd,
-            "planets": positions
+            "sign": sign.title(),
+            "english": english_text,
+            "turkish": translated
         })
+
     except Exception as e:
-        return jsonify({"error": str(e)}), 400
-
-@app.route("/horoscope/today/<sign>", methods=["GET"])
-def daily_horoscope(sign):
-    today = datetime.datetime.utcnow()
-    jd = swe.julday(today.year, today.month, today.day)
-    sun_pos = swe.calc_ut(jd, swe.SUN)[0]  # sadece dereceyi al
-
-    sun_sign = get_sun_sign(sun_pos)
-
-    if sign.lower() != sun_sign.lower():
-        message = f"Güneş bugün {sun_sign} burcunda, fakat senin burcun {sign.title()}."
-    else:
-        message = f"Bugün Güneş senin burcunda ({sign.title()}), bu enerji seni destekliyor!"
-
-    return jsonify({
-        "sun_position": round(sun_pos, 2),
-        "sun_sign": sun_sign,
-        "message": message
-    })
-
-def get_sun_sign(lon):
-    signs = [
-        "Aries", "Taurus", "Gemini", "Cancer", "Leo", "Virgo",
-        "Libra", "Scorpio", "Sagittarius", "Capricorn", "Aquarius", "Pisces"
-    ]
-    index = int(lon / 30) % 12
-    return signs[index]
-
-if __name__ == "__main__":
-    import os
-    port = int(os.environ.get("PORT", 5000))
-    app.run(debug=True, host="0.0.0.0", port=port)
+        return jsonify({"error": str(e)}), 500
