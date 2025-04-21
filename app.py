@@ -1,7 +1,6 @@
 from flask import Flask, request, jsonify
 from openai import OpenAI
 from skyfield.api import load, Topos
-from skyfield.api import N, E
 from datetime import datetime, timedelta
 import os
 import requests
@@ -28,20 +27,34 @@ ASPECTS = {
     "Sextile": 60
 }
 
+
+def ensure_ephemeris():
+    eph_file = "de440s.bsp"
+    if not os.path.exists(eph_file):
+        url = "https://naif.jpl.nasa.gov/pub/naif/generic_kernels/spk/planets/de440s.bsp"
+        from urllib.request import urlretrieve
+        urlretrieve(url, eph_file)
+    return load(eph_file)
+
+
 def get_zodiac_sign(degree):
     index = int(degree // 30) % 12
     return ZODIAC_SIGNS[index]
 
+
 def get_house(degree):
     return int(degree // 30) + 1
+
 
 def angle_difference(a1, a2):
     diff = abs(a1 - a2) % 360
     return diff if diff <= 180 else 360 - diff
 
+
 def find_aspects(planets):
     result = []
-    tolerance = 6
+    tolerance = 6  # orb toleransı
+
     for i, p1 in enumerate(planets):
         for j, p2 in enumerate(planets):
             if i >= j:
@@ -56,12 +69,13 @@ def find_aspects(planets):
                     })
     return result
 
+
 @app.route("/natal-chart", methods=["POST"])
 def natal_chart():
     try:
         data = request.json
-        date = data.get("date")
-        time = data.get("time")
+        date = data.get("date")  # YYYY-MM-DD
+        time = data.get("time")  # HH:MM
         lat = float(data.get("lat"))
         lon = float(data.get("lon"))
         tz_offset = data.get("tz", "+03:00")
@@ -72,29 +86,28 @@ def natal_chart():
 
         ts = load.timescale()
         t = ts.utc(dt_utc.year, dt_utc.month, dt_utc.day, dt_utc.hour, dt_utc.minute)
-        t_yesterday = ts.utc((dt_utc - timedelta(days=1)).timetuple()[:5])
 
-        eph = load('de440s.bsp')
-        observer = eph['earth'].at(t)
+        eph = ensure_ephemeris()
+        observer = Topos(latitude_degrees=lat, longitude_degrees=lon)
 
-        planet_keys = ["sun", "moon", "mercury", "venus", "mars", "jupiter", "saturn", "uranus", "neptune", "pluto"]
+        planet_keys = ["sun", "moon", "mercury", "venus", "mars", "jupiter",
+                       "saturn", "uranus", "neptune", "pluto"]
         chart = []
 
         for key in planet_keys:
             body = eph[key]
-            astrometric = observer.observe(body).apparent()
-            lon = astrometric.ecliptic_latlon()[1].degrees
-
-            # Retro hesaplaması
-            lon_yesterday = eph["earth"].at(t_yesterday).observe(body).apparent().ecliptic_latlon()[1].degrees
-            retro = lon < lon_yesterday
+            astrometric = eph["earth"].at(t).observe(body).apparent()
+            lon_deg = astrometric.ecliptic_latlon()[1].degrees
+            sign = get_zodiac_sign(lon_deg)
+            house = get_house(lon_deg)
+            retrograde = lon_deg > eph["earth"].at(t - timedelta(days=1)).observe(body).apparent().ecliptic_latlon()[1].degrees
 
             chart.append({
                 "name": PLANET_NAMES[key],
-                "sign": get_zodiac_sign(lon),
-                "degree": round(lon % 30, 2),
-                "retrograde": retro,
-                "house": get_house(lon)
+                "sign": sign,
+                "degree": round(lon_deg % 30, 2),
+                "retrograde": retrograde,
+                "house": house
             })
 
         aspects = find_aspects(chart)
@@ -110,7 +123,8 @@ def natal_chart():
     except Exception as e:
         return jsonify({"error": str(e)}), 400
 
-# --- BURÇ YORUMLARI ---
+
+# Günlük burç yorumu kaynakları
 def fetch_from_burc_yorumlari(sign):
     try:
         url = f"https://burc-yorumlari.vercel.app/get/{sign.lower()}"
@@ -123,6 +137,7 @@ def fetch_from_burc_yorumlari(sign):
         return None, None
     return None, None
 
+
 def fetch_from_aztro(sign):
     try:
         url = f"https://aztro.sameerkumar.website/?sign={sign}&day=today"
@@ -133,6 +148,7 @@ def fetch_from_aztro(sign):
     except:
         return None, None
     return None, None
+
 
 @app.route("/translated-horoscope/<sign>", methods=["GET"])
 def get_translated_horoscope(sign):
@@ -172,7 +188,7 @@ def get_translated_horoscope(sign):
     except Exception as e:
         return jsonify({"error": f"Translation failed: {str(e)}"}), 500
 
-# Run with waitress
+
 if __name__ == "__main__":
     from waitress import serve
     port = int(os.environ.get("PORT", 5000))
