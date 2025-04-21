@@ -94,39 +94,28 @@ def natal_chart():
         date = data.get("date")  # Örn: "1994-09-15"
         time = data.get("time")  # Örn: "15:30"
         
-        # Enlem ve boylam değerlerini düzgün formatta hazırla
-        lat = data.get("lat")
-        lon = data.get("lon")
-        
-        # Tz string olarak gelirse +03:00 veya "3" gibi, int'e çevrilir
+        # GeoPos için string decimal değer olarak veriyoruz
+        lat = str(float(data.get("lat")))   # "41.0082"
+        lon = str(float(data.get("lon")))   # "28.9784"
+
+        # Saat dilimini dönüştür
         tz_raw = data.get("tz", "+03:00")
         if isinstance(tz_raw, str) and ":" in tz_raw:
             tz = int(tz_raw.replace("+", "").split(":")[0])
         else:
-            tz = int(str(tz_raw).replace("+", ""))
-        
-        # GeoPos için değerleri tam sayı ve ondalık olarak ayırın
-        lat_deg = int(float(lat))
-        lat_min = int((float(lat) - lat_deg) * 60)
-        lon_deg = int(float(lon))
-        lon_min = int((float(lon) - lon_deg) * 60)
-        
-        # Doğu/batı, kuzey/güney belirle
-        lat_ns = "N" if float(lat) >= 0 else "S"
-        lon_ew = "E" if float(lon) >= 0 else "W"
-        
-        # GeoPos formatına dönüştür: derece°dakika'yön
-        lat_str = f"{abs(lat_deg)}°{lat_min}'{lat_ns}"
-        lon_str = f"{abs(lon_deg)}°{lon_min}'{lon_ew}"
-        
-        location = GeoPos(lat_str, lon_str)
+            tz = int(float(tz_raw))
+
+        # GeoPos: düz string decimal değer (örn: "41.0082", "28.9784")
+        location = GeoPos(lat, lon)
         dt = Datetime(date, time, tz)
         chart = Chart(dt, location)
+
         planets = [
             const.SUN, const.MOON, const.MERCURY, const.VENUS, const.MARS,
             const.JUPITER, const.SATURN, const.URANUS, const.NEPTUNE, const.PLUTO,
             const.ASC, const.MC
         ]
+
         result = []
         for obj_name in planets:
             obj = chart.get(obj_name)
@@ -137,14 +126,17 @@ def natal_chart():
                 "longitude": obj.lon,
                 "retrograde": obj.retrograde
             })
+
         return jsonify({
             "chart": result,
             "date": date,
             "time": time,
             "timezone": tz
         })
+
     except Exception as e:
         return jsonify({"error": str(e)}), 400
+
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
