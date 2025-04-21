@@ -3,14 +3,19 @@ import os
 import requests
 from openai import OpenAI
 from skyfield.api import load, Topos
-from timezonefinder import TimezoneFinder
+from skyfield.api import N, E
+from skyfield.api import Star
+from skyfield import almanac
+from skyfield.data import mpc
+from skyfield.positionlib import position_of_radec
 from datetime import datetime
 import pytz
 
 app = Flask(__name__)
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-# Horoscope kaynakları
+# ---------- 1. Günlük Burç Yorumları ----------
+
 def fetch_from_horoscope_app_api(sign):
     try:
         url = f"https://horoscope-app-api.vercel.app/api/v1/get-horoscope/daily?sign={sign}&day=today"
@@ -73,7 +78,6 @@ def get_translated_horoscope(sign):
                 {"role": "user", "content": f"Translate this horoscope to Turkish:\n\n{text}"}
             ]
         )
-
         translated = response.choices[0].message.content
 
         return jsonify({
@@ -85,77 +89,90 @@ def get_translated_horoscope(sign):
     except Exception as e:
         return jsonify({"error": f"Translation failed: {str(e)}"}), 500
 
-
-# Skyfield setup
-ephemeris = load('de421.bsp')
-planets = {
-    "Sun": ephemeris['sun'],
-    "Moon": ephemeris['moon'],
-    "Mercury": ephemeris['mercury'],
-    "Venus": ephemeris['venus'],
-    "Mars": ephemeris['mars'],
-    "Jupiter": ephemeris['jupiter barycenter'],
-    "Saturn": ephemeris['saturn barycenter'],
-    "Uranus": ephemeris['uranus barycenter'],
-    "Neptune": ephemeris['neptune barycenter'],
-    "Pluto": ephemeris['pluto barycenter'],
-}
-
-ZODIAC_SIGNS = [
-    "Aries", "Taurus", "Gemini", "Cancer", "Leo", "Virgo",
-    "Libra", "Scorpio", "Sagittarius", "Capricorn", "Aquarius", "Pisces"
-]
-
-def degree_to_sign(degree):
-    index = int(degree // 30) % 12
-    sign = ZODIAC_SIGNS[index]
-    degree_in_sign = degree % 30
-    return sign, round(degree_in_sign, 2)
+# ---------- 2. Doğum Haritası Hesaplama (Skyfield ile) ----------
 
 @app.route("/natal-chart", methods=["POST"])
 def natal_chart():
     try:
         data = request.json
-        date = data.get("date")
-        time = data.get("time")
-        lat = float(data.get("lat"))
-        lon = float(data.get("lon"))
+        date = data.get("date")  # "1994-09-15"
+        time = data.get("time")  # "15:30"
+        lat = float(data.get("lat"))  # 41.0082
+        lon = float(data.get("lon"))  # 28.9784
+        tz_str = data.get("tz", "+03:00")  # "+03:00"
 
-        tf = TimezoneFinder()
-        tz_str = tf.timezone_at(lat=lat, lng=lon)
-        if tz_str is None:
-            tz_str = 'UTC'
-        timezone = pytz.timezone(tz_str)
-
+        # Timezone dönüşümü
+        tz_offset = int(tz_str.replace("+", "").split(":")[0])
+        tz = pytz.FixedOffset(tz_offset * 60)
         dt = datetime.strptime(f"{date} {time}", "%Y-%m-%d %H:%M")
-        dt = timezone.localize(dt)
+        dt = tz.localize(dt)
 
+        # Skyfield yüklemeleri
+        eph = load('de421.bsp')
+        planets = eph
         ts = load.timescale()
         t = ts.from_datetime(dt)
-        observer = Topos(latitude_degrees=lat, longitude_degrees=lon)
 
-        result = []
-        for name, body in planets.items():
-            astrometric = ephemeris['earth'].at(t).observe(body).apparent()
-            ecliptic = astrometric.ecliptic_latlon()
-            lon_deg = ecliptic[1].degrees
-            sign, deg = degree_to_sign(lon_deg)
+        location = Topos(latitude_degrees=lat, longitude_degrees=lon)
 
-            result.append({
+        observer = eph['earth'] + location
+
+        planet_list = {
+            'Sun': 'sun',
+            'Moon': 'moon',
+            'Mercury': 'mercury',
+            'Venus': 'venus',
+            'Mars': 'mars',
+            'Jupiter': 'jupiter barycenter',
+            'Saturn': 'saturn barycenter',
+            'Uranus': 'uranus barycenter',
+            'Neptune': 'neptune barycenter',
+            'Pluto': 'pluto barycenter'
+        }
+
+        chart = []
+
+        for name, target in planet_list.items():
+            planet = eph[target]
+            astrometric = observer.at(t).observe(planet).apparent()
+            ecl = astrometric.ecliptic_latlon()
+            lon_deg = round(ecl[1].degrees, 2)
+
+            # Retrograde kontrolü: geçmişteki konuma göre ileride mi?
+            past_t = ts.from_datetime(dt - timedelta(days=5))
+            past_ast = observer.at(past_t).observe(planet).apparent()
+            past_lon = past_ast.ecliptic_latlon()[1].degrees
+            retro = lon_deg < past_lon
+
+            sign = zodiac_sign(lon_deg)
+
+            chart.append({
                 "name": name,
                 "sign": sign,
-                "degree": deg
+                "degree": lon_deg,
+                "retrograde": retro
             })
 
         return jsonify({
-            "chart": result,
-            "datetime": dt.isoformat(),
+            "chart": chart,
+            "date": date,
+            "time": time,
             "timezone": tz_str
         })
 
     except Exception as e:
         return jsonify({"error": str(e)}), 400
 
+# ---------- Yardımcı Fonksiyonlar ----------
+
+def zodiac_sign(degree):
+    signs = [
+        "Koç", "Boğa", "İkizler", "Yengeç", "Aslan", "Başak",
+        "Terazi", "Akrep", "Yay", "Oğlak", "Kova", "Balık"
+    ]
+    return signs[int(degree / 30) % 12]
+
+# ---------- Sunucu ----------
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
