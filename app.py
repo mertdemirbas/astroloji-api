@@ -1,22 +1,21 @@
 from flask import Flask, request, jsonify
-from skyfield.api import load, Topos, Loader
-from datetime import datetime, timedelta
+from openai import OpenAI
+from skyfield.api import load, Topos
+from datetime import datetime, timedelta, timezone
 import os
 import requests
-from openai import OpenAI
+import math
 
-# Flask app
 app = Flask(__name__)
-
-# OpenAI istemcisi
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-# Skyfield loader ile runtime'da indirme
-skyfield_loader = Loader('./skyfield_data')
-eph = skyfield_loader('de440s.bsp')
-ts = skyfield_loader.timescale()
+# Ephemeris dosyasını indir (varsa atla)
+EPHEMERIS_FILE = "de440s.bsp"
+EPHEMERIS_URL = "https://naif.jpl.nasa.gov/pub/naif/generic_kernels/spk/planets/de440s.bsp"
+if not os.path.exists(EPHEMERIS_FILE):
+    import urllib.request
+    urllib.request.urlretrieve(EPHEMERIS_URL, EPHEMERIS_FILE)
 
-# Gezegenler ve burçlar
 PLANET_NAMES = {
     "sun": "Güneş", "moon": "Ay", "mercury": "Merkür", "venus": "Venüs", "mars": "Mars",
     "jupiter": "Jüpiter", "saturn": "Satürn", "uranus": "Uranüs", "neptune": "Neptün", "pluto": "Plüton"
@@ -34,7 +33,6 @@ ASPECTS = {
     "Trine": 120,
     "Sextile": 60
 }
-
 
 def get_zodiac_sign(degree):
     index = int(degree // 30) % 12
@@ -64,34 +62,38 @@ def find_aspects(planets):
                     })
     return result
 
-
 @app.route("/natal-chart", methods=["POST"])
 def natal_chart():
     try:
         data = request.json
-        date = data.get("date")
-        time = data.get("time")
-        lat = float(data.get("lat"))
-        lon = float(data.get("lon"))
-        tz_offset = data.get("tz", "+03:00")
+        date = data.get("date")       # Örn: "1994-09-15"
+        time = data.get("time")       # Örn: "15:30"
+        lat = float(data.get("lat"))  # Örn: 41.0082
+        lon = float(data.get("lon"))  # Örn: 28.9784
+        tz_raw = data.get("tz", "+03:00")
 
-        # Zaman dönüşümü UTC'ye
-        dt = datetime.fromisoformat(f"{date}T{time}:00")
-        offset_hours = int(tz_offset.replace("+", "").replace(":", ""))
-        dt_utc = dt - timedelta(hours=offset_hours)
+        offset_hours = int(tz_raw.replace(":", "").replace("+", "")) // 100
+        dt_local = datetime.fromisoformat(f"{date}T{time}:00")
+        dt_utc = dt_local - timedelta(hours=offset_hours)
 
+        ts = load.timescale()
         t = ts.utc(dt_utc.year, dt_utc.month, dt_utc.day, dt_utc.hour, dt_utc.minute)
+        eph = load(EPHEMERIS_FILE)
         observer = Topos(latitude_degrees=lat, longitude_degrees=lon)
 
-        planet_keys = ["sun", "moon", "mercury", "venus", "mars", "jupiter", "saturn", "uranus", "neptune", "pluto"]
+        planet_keys = list(PLANET_NAMES.keys())
         chart = []
 
         for key in planet_keys:
             body = eph[key]
             astrometric = eph["earth"].at(t).observe(body).apparent()
             lon_deg = astrometric.ecliptic_latlon()[1].degrees
-            prev_lon_deg = eph["earth"].at(t - timedelta(days=1)).observe(body).apparent().ecliptic_latlon()[1].degrees
-            retro = lon_deg < prev_lon_deg
+
+            # Retrogradlık
+            prev_time = ts.utc((dt_utc - timedelta(days=1)).timetuple()[:6])
+            prev_astrometric = eph["earth"].at(prev_time).observe(body).apparent()
+            prev_lon = prev_astrometric.ecliptic_latlon()[1].degrees
+            retro = lon_deg < prev_lon
 
             chart.append({
                 "name": PLANET_NAMES[key],
@@ -108,13 +110,12 @@ def natal_chart():
             "aspects": aspects,
             "date": date,
             "time": time,
-            "timezone": tz_offset
+            "timezone": tz_raw
         })
-
     except Exception as e:
         return jsonify({"error": str(e)}), 400
 
-# Günlük burç yorumu kaynakları
+# Günlük burç yorumları
 def fetch_from_burc_yorumlari(sign):
     try:
         url = f"https://burc-yorumlari.vercel.app/get/{sign.lower()}"
@@ -176,7 +177,6 @@ def get_translated_horoscope(sign):
     except Exception as e:
         return jsonify({"error": f"Translation failed: {str(e)}"}), 500
 
-# Prod ortamı için
 if __name__ == "__main__":
     from waitress import serve
     port = int(os.environ.get("PORT", 5000))
