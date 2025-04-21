@@ -151,7 +151,7 @@ def natal_chart():
                 "name": name,
                 "sign": sign,
                 "degree": lon_deg,
-                "retrograde": retro
+                "retrograde": "yes" if obj.retrograde else "no"
             })
 
         return jsonify({
