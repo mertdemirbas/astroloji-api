@@ -3,20 +3,15 @@ import os
 import requests
 from openai import OpenAI
 from skyfield.api import load, Topos
-from skyfield.api import N, E
+from skyfield.api import N, E, wgs84
 from skyfield.api import Star
-from skyfield import almanac
-from skyfield.data import mpc
-from skyfield.positionlib import position_of_radec
-from datetime import datetime
-from datetime import timedelta
+from datetime import datetime, timedelta
 import pytz
 
 app = Flask(__name__)
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-# ---------- 1. Günlük Burç Yorumları ----------
-
+# 1. Horoscope App API (İngilizce)
 def fetch_from_horoscope_app_api(sign):
     try:
         url = f"https://horoscope-app-api.vercel.app/api/v1/get-horoscope/daily?sign={sign}&day=today"
@@ -28,6 +23,7 @@ def fetch_from_horoscope_app_api(sign):
         return None, None
     return None, None
 
+# 2. Aztro API (İngilizce)
 def fetch_from_aztro_api(sign):
     try:
         url = f"https://aztro.sameerkumar.website/?sign={sign}&day=today"
@@ -39,6 +35,7 @@ def fetch_from_aztro_api(sign):
         return None, None
     return None, None
 
+# 3. Türkçe kaynak
 def fetch_from_burc_yorumlari(sign):
     try:
         url = f"https://burc-yorumlari.vercel.app/get/{sign.lower()}"
@@ -79,6 +76,7 @@ def get_translated_horoscope(sign):
                 {"role": "user", "content": f"Translate this horoscope to Turkish:\n\n{text}"}
             ]
         )
+
         translated = response.choices[0].message.content
 
         return jsonify({
@@ -90,72 +88,68 @@ def get_translated_horoscope(sign):
     except Exception as e:
         return jsonify({"error": f"Translation failed: {str(e)}"}), 500
 
-# ---------- 2. Doğum Haritası Hesaplama (Skyfield ile) ----------
-
 @app.route("/natal-chart", methods=["POST"])
 def natal_chart():
     try:
         data = request.json
-        date = data.get("date")  # "1994-09-15"
-        time = data.get("time")  # "15:30"
-        lat = float(data.get("lat"))  # 41.0082
-        lon = float(data.get("lon"))  # 28.9784
-        tz_str = data.get("tz", "+03:00")  # "+03:00"
+        date = data.get("date")      # e.g., "1994-09-15"
+        time = data.get("time")      # e.g., "15:30"
+        lat = float(data.get("lat")) # 41.0082
+        lon = float(data.get("lon")) # 28.9784
+        tz_str = data.get("tz", "+03:00")  # e.g., "+03:00"
 
-        # Timezone dönüşümü
-        tz_offset = int(tz_str.replace("+", "").split(":")[0])
-        tz = pytz.FixedOffset(tz_offset * 60)
-        dt = datetime.strptime(f"{date} {time}", "%Y-%m-%d %H:%M")
-        dt = tz.localize(dt)
+        # Zaman dilimi hesapla
+        offset_hours = int(tz_str.replace(":", "").replace("+", "").replace("-", ""))
+        if "-" in tz_str:
+            offset_hours = -offset_hours
+        tz = pytz.FixedOffset(offset_hours * 60)
 
-        # Skyfield yüklemeleri
-        eph = load('de421.bsp')
-        planets = eph
+        dt_local = tz.localize(datetime.strptime(f"{date} {time}", "%Y-%m-%d %H:%M"))
         ts = load.timescale()
-        t = ts.from_datetime(dt)
+        t = ts.from_datetime(dt_local)
 
-        location = Topos(latitude_degrees=lat, longitude_degrees=lon)
+        eph = load('de421.bsp')
+        earth = eph["earth"]
+        observer = earth + Topos(latitude_degrees=lat, longitude_degrees=lon)
 
-        observer = eph['earth'] + location
-
-        planet_list = {
-            'Sun': 'sun',
-            'Moon': 'moon',
-            'Mercury': 'mercury',
-            'Venus': 'venus',
-            'Mars': 'mars',
-            'Jupiter': 'jupiter barycenter',
-            'Saturn': 'saturn barycenter',
-            'Uranus': 'uranus barycenter',
-            'Neptune': 'neptune barycenter',
-            'Pluto': 'pluto barycenter'
+        bodies = {
+            "Sun": eph["sun"],
+            "Moon": eph["moon"],
+            "Mercury": eph["mercury"],
+            "Venus": eph["venus"],
+            "Mars": eph["mars"],
+            "Jupiter": eph["jupiter barycenter"],
+            "Saturn": eph["saturn barycenter"],
+            "Uranus": eph["uranus barycenter"],
+            "Neptune": eph["neptune barycenter"],
+            "Pluto": eph["pluto barycenter"]
         }
 
-        chart = []
+        zodiac = [
+            "Aries", "Taurus", "Gemini", "Cancer", "Leo", "Virgo",
+            "Libra", "Scorpio", "Sagittarius", "Capricorn", "Aquarius", "Pisces"
+        ]
 
-        for name, target in planet_list.items():
-            planet = eph[target]
-            astrometric = observer.at(t).observe(planet).apparent()
-            ecl = astrometric.ecliptic_latlon()
-            lon_deg = round(ecl[1].degrees, 2)
+        results = []
+        for name, body in bodies.items():
+            astrometric = observer.at(t).observe(body).apparent()
+            ra, dec, distance = astrometric.radec()
+            eclip = astrometric.ecliptic_latlon()
+            lon_deg = eclip[1].degrees
+            retrograde = observer.at(t).observe(body).apparent().velocity.km_per_s < 0
 
-            # Retrograde kontrolü: geçmişteki konuma göre ileride mi?
-            past_t = ts.from_datetime(dt - timedelta(days=5))
-            past_ast = observer.at(past_t).observe(planet).apparent()
-            past_lon = past_ast.ecliptic_latlon()[1].degrees
-            retro = lon_deg < past_lon
+            sign_index = int((lon_deg % 360) / 30)
+            sign = zodiac[sign_index]
 
-            sign = zodiac_sign(lon_deg)
-
-            chart.append({
+            results.append({
                 "name": name,
                 "sign": sign,
-                "degree": lon_deg,
-                "retrograde": "yes" if obj.retrograde else "no"
+                "degree": round(lon_deg % 30, 2),
+                "retrograde": retrograde
             })
 
         return jsonify({
-            "chart": chart,
+            "chart": results,
             "date": date,
             "time": time,
             "timezone": tz_str
@@ -163,17 +157,6 @@ def natal_chart():
 
     except Exception as e:
         return jsonify({"error": str(e)}), 400
-
-# ---------- Yardımcı Fonksiyonlar ----------
-
-def zodiac_sign(degree):
-    signs = [
-        "Koç", "Boğa", "İkizler", "Yengeç", "Aslan", "Başak",
-        "Terazi", "Akrep", "Yay", "Oğlak", "Kova", "Balık"
-    ]
-    return signs[int(degree / 30) % 12]
-
-# ---------- Sunucu ----------
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
