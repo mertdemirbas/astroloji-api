@@ -4,17 +4,10 @@ from skyfield.api import load, Topos
 from datetime import datetime, timedelta, timezone
 import os
 import requests
-import math
+import re
 
 app = Flask(__name__)
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-
-# Ephemeris dosyasını indir (varsa atla)
-EPHEMERIS_FILE = "de440s.bsp"
-EPHEMERIS_URL = "https://naif.jpl.nasa.gov/pub/naif/generic_kernels/spk/planets/de440s.bsp"
-if not os.path.exists(EPHEMERIS_FILE):
-    import urllib.request
-    urllib.request.urlretrieve(EPHEMERIS_URL, EPHEMERIS_FILE)
 
 PLANET_NAMES = {
     "sun": "Güneş", "moon": "Ay", "mercury": "Merkür", "venus": "Venüs", "mars": "Mars",
@@ -34,6 +27,7 @@ ASPECTS = {
     "Sextile": 60
 }
 
+
 def get_zodiac_sign(degree):
     index = int(degree // 30) % 12
     return ZODIAC_SIGNS[index]
@@ -47,7 +41,7 @@ def angle_difference(a1, a2):
 
 def find_aspects(planets):
     result = []
-    tolerance = 6
+    tolerance = 6  # orb
     for i, p1 in enumerate(planets):
         for j, p2 in enumerate(planets):
             if i >= j:
@@ -62,37 +56,47 @@ def find_aspects(planets):
                     })
     return result
 
+def parse_timezone_offset(tz_str):
+    match = re.match(r"([+-])(\d{2}):(\d{2})", tz_str)
+    if not match:
+        raise ValueError("Invalid timezone format. Use +HH:MM or -HH:MM")
+    sign, hours, minutes = match.groups()
+    offset = int(hours) * 60 + int(minutes)
+    if sign == "-":
+        offset = -offset
+    return timezone(timedelta(minutes=offset))
+
 @app.route("/natal-chart", methods=["POST"])
 def natal_chart():
     try:
         data = request.json
-        date = data.get("date")       # Örn: "1994-09-15"
-        time = data.get("time")       # Örn: "15:30"
-        lat = float(data.get("lat"))  # Örn: 41.0082
-        lon = float(data.get("lon"))  # Örn: 28.9784
-        tz_raw = data.get("tz", "+03:00")
+        date = data.get("date")
+        time = data.get("time")
+        lat = float(data.get("lat"))
+        lon = float(data.get("lon"))
+        tz = data.get("tz", "+00:00")
 
-        offset_hours = int(tz_raw.replace(":", "").replace("+", "")) // 100
-        dt_local = datetime.fromisoformat(f"{date}T{time}:00")
-        dt_utc = dt_local - timedelta(hours=offset_hours)
+        dt_local = datetime.fromisoformat(f"{date}T{time}")
+        tzinfo = parse_timezone_offset(tz)
+        dt_utc = dt_local.replace(tzinfo=tzinfo).astimezone(timezone.utc)
 
         ts = load.timescale()
         t = ts.utc(dt_utc.year, dt_utc.month, dt_utc.day, dt_utc.hour, dt_utc.minute)
-        eph = load(EPHEMERIS_FILE)
+
+        eph = load('de440s.bsp')
         observer = Topos(latitude_degrees=lat, longitude_degrees=lon)
 
-        planet_keys = list(PLANET_NAMES.keys())
         chart = []
+        planet_keys = ["sun", "moon", "mercury", "venus", "mars",
+                       "jupiter", "saturn", "uranus", "neptune", "pluto"]
 
         for key in planet_keys:
             body = eph[key]
-            astrometric = eph["earth"].at(t).observe(body).apparent()
+            astrometric = eph['earth'].at(t).observe(body).apparent()
             lon_deg = astrometric.ecliptic_latlon()[1].degrees
 
-            # Retrogradlık
-            prev_time = ts.utc((dt_utc - timedelta(days=1)).timetuple()[:6])
-            prev_astrometric = eph["earth"].at(prev_time).observe(body).apparent()
-            prev_lon = prev_astrometric.ecliptic_latlon()[1].degrees
+            prev = eph['earth'].at(t - timedelta(days=1)).observe(body).apparent()
+            prev_lon = prev.ecliptic_latlon()[1].degrees
             retro = lon_deg < prev_lon
 
             chart.append({
@@ -110,10 +114,12 @@ def natal_chart():
             "aspects": aspects,
             "date": date,
             "time": time,
-            "timezone": tz_raw
+            "timezone": tz
         })
+
     except Exception as e:
         return jsonify({"error": str(e)}), 400
+
 
 # Günlük burç yorumları
 def fetch_from_burc_yorumlari(sign):
@@ -176,6 +182,7 @@ def get_translated_horoscope(sign):
         })
     except Exception as e:
         return jsonify({"error": f"Translation failed: {str(e)}"}), 500
+
 
 if __name__ == "__main__":
     from waitress import serve
