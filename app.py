@@ -2,15 +2,15 @@ from flask import Flask, jsonify, request
 import os
 import requests
 from openai import OpenAI
-from flatlib.chart import Chart
-from flatlib.datetime import Datetime
-from flatlib.geopos import GeoPos
-from flatlib import const
+from skyfield.api import load, Topos
+from timezonefinder import TimezoneFinder
+from datetime import datetime
+import pytz
 
 app = Flask(__name__)
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-# 1. Horoscope App API (İngilizce)
+# Horoscope kaynakları
 def fetch_from_horoscope_app_api(sign):
     try:
         url = f"https://horoscope-app-api.vercel.app/api/v1/get-horoscope/daily?sign={sign}&day=today"
@@ -22,7 +22,6 @@ def fetch_from_horoscope_app_api(sign):
         return None, None
     return None, None
 
-# 2. Aztro API (İngilizce)
 def fetch_from_aztro_api(sign):
     try:
         url = f"https://aztro.sameerkumar.website/?sign={sign}&day=today"
@@ -34,7 +33,6 @@ def fetch_from_aztro_api(sign):
         return None, None
     return None, None
 
-# 3. Türkçe kaynak
 def fetch_from_burc_yorumlari(sign):
     try:
         url = f"https://burc-yorumlari.vercel.app/get/{sign.lower()}"
@@ -88,59 +86,71 @@ def get_translated_horoscope(sign):
         return jsonify({"error": f"Translation failed: {str(e)}"}), 500
 
 
+# Skyfield setup
+ephemeris = load('de421.bsp')
+planets = {
+    "Sun": ephemeris['sun'],
+    "Moon": ephemeris['moon'],
+    "Mercury": ephemeris['mercury'],
+    "Venus": ephemeris['venus'],
+    "Mars": ephemeris['mars'],
+    "Jupiter": ephemeris['jupiter barycenter'],
+    "Saturn": ephemeris['saturn barycenter'],
+    "Uranus": ephemeris['uranus barycenter'],
+    "Neptune": ephemeris['neptune barycenter'],
+    "Pluto": ephemeris['pluto barycenter'],
+}
+
+ZODIAC_SIGNS = [
+    "Aries", "Taurus", "Gemini", "Cancer", "Leo", "Virgo",
+    "Libra", "Scorpio", "Sagittarius", "Capricorn", "Aquarius", "Pisces"
+]
+
+def degree_to_sign(degree):
+    index = int(degree // 30) % 12
+    sign = ZODIAC_SIGNS[index]
+    degree_in_sign = degree % 30
+    return sign, round(degree_in_sign, 2)
+
 @app.route("/natal-chart", methods=["POST"])
 def natal_chart():
     try:
         data = request.json
+        date = data.get("date")
+        time = data.get("time")
+        lat = float(data.get("lat"))
+        lon = float(data.get("lon"))
 
-        date = data.get("date")         # "1994-09-15"
-        time = data.get("time")         # "15:30"
-        lat = float(data.get("lat"))    # 41.0082
-        lon = float(data.get("lon"))    # 28.9784
-        tz_raw = data.get("tz", "+03:00")
+        tf = TimezoneFinder()
+        tz_str = tf.timezone_at(lat=lat, lng=lon)
+        if tz_str is None:
+            tz_str = 'UTC'
+        timezone = pytz.timezone(tz_str)
 
-        # Timezone'ı düzelt
-        if isinstance(tz_raw, str) and ":" in tz_raw:
-            tz = int(tz_raw.replace("+", "").split(":")[0])
-        else:
-            tz = int(str(tz_raw).replace("+", ""))
+        dt = datetime.strptime(f"{date} {time}", "%Y-%m-%d %H:%M")
+        dt = timezone.localize(dt)
 
-        # GeoPos formatı: derece + dakika + yön
-        def to_deg_min(value, positive_dir, negative_dir):
-            deg = int(abs(value))
-            minutes = int((abs(value) - deg) * 60)
-            direction = positive_dir if value >= 0 else negative_dir
-            return f"{deg}°{minutes}'{direction}"
-
-        lat_str = to_deg_min(lat, "N", "S")
-        lon_str = to_deg_min(lon, "E", "W")
-
-        location = GeoPos(lat_str, lon_str)
-        dt = Datetime(date, time, tz)
-        chart = Chart(dt, location)
-
-        planets = [
-            const.SUN, const.MOON, const.MERCURY, const.VENUS, const.MARS,
-            const.JUPITER, const.SATURN, const.URANUS, const.NEPTUNE, const.PLUTO,
-            const.ASC, const.MC
-        ]
+        ts = load.timescale()
+        t = ts.from_datetime(dt)
+        observer = Topos(latitude_degrees=lat, longitude_degrees=lon)
 
         result = []
-        for obj_name in planets:
-            obj = chart.get(obj_name)
+        for name, body in planets.items():
+            astrometric = ephemeris['earth'].at(t).observe(body).apparent()
+            ecliptic = astrometric.ecliptic_latlon()
+            lon_deg = ecliptic[1].degrees
+            sign, deg = degree_to_sign(lon_deg)
+
             result.append({
-                "name": obj.id,
-                "sign": obj.sign,
-                "house": obj.house,
-                "longitude": obj.lon,
-                "retrograde": obj.retrograde
+                "name": name,
+                "sign": sign,
+                "degree": deg
             })
 
         return jsonify({
             "chart": result,
-            "date": date,
-            "time": time,
-            "timezone": tz
+            "datetime": dt.isoformat(),
+            "timezone": tz_str
         })
 
     except Exception as e:
