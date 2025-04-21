@@ -91,31 +91,29 @@ def get_translated_horoscope(sign):
 def natal_chart():
     try:
         data = request.json
-
         date = data.get("date")  # Örn: "1994-09-15"
         time = data.get("time")  # Örn: "15:30"
-        lat = float(data.get("lat"))  # float olarak parse
-        lon = float(data.get("lon"))  # float olarak parse
-
+        
+        # String olarak gelen değerleri float'a dönüştür
+        lat = float(str(data.get("lat", "0")).replace(",", "."))
+        lon = float(str(data.get("lon", "0")).replace(",", "."))
+        
         # Tz string olarak gelirse +03:00 veya "3" gibi, int'e çevrilir
         tz_raw = data.get("tz", "+03:00")
         if isinstance(tz_raw, str) and ":" in tz_raw:
             tz = int(tz_raw.replace("+", "").split(":")[0])
         else:
-            tz = int(float(tz_raw))
-
-        # GeoPos str format istiyor
+            tz = int(float(str(tz_raw)))
+            
+        # GeoPos için string formatında enlem ve boylam değerleri
         location = GeoPos(f"{lat:.4f}", f"{lon:.4f}")
         dt = Datetime(date, time, tz)
-
         chart = Chart(dt, location)
-
         planets = [
             const.SUN, const.MOON, const.MERCURY, const.VENUS, const.MARS,
             const.JUPITER, const.SATURN, const.URANUS, const.NEPTUNE, const.PLUTO,
             const.ASC, const.MC
         ]
-
         result = []
         for obj_name in planets:
             obj = chart.get(obj_name)
@@ -126,14 +124,12 @@ def natal_chart():
                 "longitude": obj.lon,
                 "retrograde": obj.retrograde
             })
-
         return jsonify({
             "chart": result,
             "date": date,
             "time": time,
             "timezone": tz
         })
-
     except Exception as e:
         return jsonify({"error": str(e)}), 400
 
