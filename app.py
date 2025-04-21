@@ -87,33 +87,35 @@ def get_translated_horoscope(sign):
     except Exception as e:
         return jsonify({"error": f"Translation failed: {str(e)}"}), 500
 
+
 @app.route("/natal-chart", methods=["POST"])
 def natal_chart():
     try:
         data = request.json
-        date = data.get("date")  # Örn: "1994-09-15"
-        time = data.get("time")  # Örn: "15:30"
-        
-        # Enlem ve boylam değerlerini string formatına dönüştür
-        lat_str = str(data.get("lat"))  # "41.0082" formatında string olarak al
-        lon_str = str(data.get("lon"))  # "28.9784" formatında string olarak al
-        
-        # Tz string olarak gelirse +03:00 veya "3" gibi, int'e çevrilir
-        tz_raw = data.get("tz", "+03:00")
+
+        date = data.get("date")            # "1994-09-15"
+        time = data.get("time")            # "15:30"
+        lat = str(float(data.get("lat")))  # "41.0082"
+        lon = str(float(data.get("lon")))  # "28.9784"
+        tz_raw = data.get("tz", "+03:00")  # "+03:00"
+
+        # Saat dilimini ayıkla
         if isinstance(tz_raw, str) and ":" in tz_raw:
             tz = int(tz_raw.replace("+", "").split(":")[0])
         else:
-            tz = int(str(tz_raw).replace("+", ""))
-        
-        # GeoPos için lat ve lon değerlerini sağla
-        location = GeoPos(lat_str, lon_str)
+            tz = int(float(tz_raw))
+
+        # GeoPos doğru decimal string formatı alır
+        location = GeoPos(lat, lon)
         dt = Datetime(date, time, tz)
         chart = Chart(dt, location)
+
         planets = [
             const.SUN, const.MOON, const.MERCURY, const.VENUS, const.MARS,
             const.JUPITER, const.SATURN, const.URANUS, const.NEPTUNE, const.PLUTO,
             const.ASC, const.MC
         ]
+
         result = []
         for obj_name in planets:
             obj = chart.get(obj_name)
@@ -124,15 +126,18 @@ def natal_chart():
                 "longitude": obj.lon,
                 "retrograde": obj.retrograde
             })
+
         return jsonify({
             "chart": result,
             "date": date,
             "time": time,
             "timezone": tz
         })
+
     except Exception as e:
         return jsonify({"error": str(e)}), 400
-        
+
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
