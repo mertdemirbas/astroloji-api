@@ -164,47 +164,64 @@ def get_translated_horoscope(sign):
     try:
         sources = [fetch_from_burc_yorumlari, fetch_from_aztro]
         text, lang = None, None
+
         for source in sources:
             text, lang = source(sign)
             if text:
                 break
 
+        # If all sources failed, generate a fallback horoscope
         if not text:
-            return jsonify({
-                "sign": sign.title(),
-                "original": None,
-                "translated": "Burç yorumu şu anda alınamıyor. Lütfen daha sonra tekrar deneyin."
-            }), 200
+            logging.warning("All horoscope sources failed, generating fallback")
+            try:
+                # Generate a horoscope with OpenAI as fallback
+                response = client.chat.completions.create(
+                    model="gpt-3.5-turbo",
+                    messages=[
+                        {"role": "system", "content": "You are an astrologer who writes brief daily horoscopes in Turkish."},
+                        {"role": "user", "content": f"Write a short daily horoscope for {sign} in Turkish. Keep it positive and around 3-4 sentences."}
+                    ]
+                )
+                text = response.choices[0].message.content
+                lang = "tr"
+            except Exception as e:
+                logging.error(f"Fallback generation failed: {str(e)}")
+                # Last resort fallback
+                text = f"{sign.title()} burcu için bugün yeni başlangıçlar yapma ve kendini keşfetme zamanı. Enerjin yüksek, fırsatları değerlendir. Sevdiklerinle vakit geçirmek için güzel bir gün."
+                lang = "tr"
 
         if lang == "tr":
             return jsonify({
                 "sign": sign.title(),
                 "original": text,
-                "translated": text
+                "translated": text,
+                "source": "fallback" if not any(source(sign)[0] for source in sources) else "api"
             })
 
-        response = client.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                {"role": "system", "content": "You are a helpful assistant who translates astrology texts into Turkish."},
-                {"role": "user", "content": f"Translate this horoscope to Turkish:
+        # Only translate if needed
+        try:
+            response = client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=[
+                    {"role": "system", "content": "You are a helpful assistant who translates astrology texts into Turkish."},
+                    {"role": "user", "content": f"Translate this horoscope to Turkish:\n\n{text}"}
+                ]
+            )
+            translated = response.choices[0].message.content
+        except Exception as e:
+            logging.error(f"Translation error: {str(e)}")
+            # If translation fails, return original text
+            translated = f"(Translation failed) {text}"
 
-{text}"}
-            ]
-        )
-        translated = response.choices[0].message.content.strip()
         return jsonify({
             "sign": sign.title(),
             "original": text,
-            "translated": translated
+            "translated": translated,
+            "source": "api"
         })
     except Exception as e:
-        return jsonify({
-            "sign": sign.title(),
-            "original": None,
-            "translated": "Burç yorumu alınırken hata oluştu.",
-            "error": str(e)
-        }), 200
+        logging.error(f"Error in translated-horoscope: {str(e)}")
+        return jsonify({"error": f"Translation failed: {str(e)}"}), 500
 
 @app.route("/health", methods=["GET"])
 def health_check():
