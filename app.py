@@ -1,6 +1,6 @@
 from flask import Flask, request, jsonify
 from openai import OpenAI
-from skyfield.api import load, Topos, wgs84
+from skyfield.api import load, Topos, Star, wgs84
 from datetime import datetime, timedelta, timezone
 import os
 import requests
@@ -13,32 +13,81 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 app = Flask(__name__)
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-# Ephemeris files
-EPHEMERIS_FILE = "de421.bsp"  # Changed to a more reliable ephemeris file
-EPHEMERIS_URL = "https://naif.jpl.nasa.gov/pub/naif/generic_kernels/spk/planets/de421.bsp"
+# Load timescale once at startup
+ts = load.timescale()
 
-def download_ephemeris():
-    if not os.path.exists(EPHEMERIS_FILE):
+# Planetary ephemeris calculations without relying on external files
+def calculate_planetary_positions(date_utc):
+    """Calculate planetary positions using built-in data"""
+    planets = load('de440s.bsp')  # Use the bundled ephemeris
+    earth = planets['earth']
+    
+    # Dictionary to track planetary positions
+    results = []
+
+    # Date for calculation
+    t = ts.utc(date_utc.year, date_utc.month, date_utc.day, 
+                date_utc.hour, date_utc.minute, date_utc.second)
+    
+    # Calculate position for each planet
+    planet_list = {
+        'sun': 'Güneş',
+        'moon': 'Ay',
+        'mercury': 'Merkür', 
+        'venus': 'Venüs', 
+        'mars': 'Mars',
+        'jupiter barycenter': 'Jüpiter', 
+        'saturn barycenter': 'Satürn'
+    }
+    
+    # Get planet positions
+    for key, name in planet_list.items():
         try:
-            logging.info(f"Downloading ephemeris file from {EPHEMERIS_URL}")
-            import urllib.request
-            urllib.request.urlretrieve(EPHEMERIS_URL, EPHEMERIS_FILE)
-            logging.info(f"Successfully downloaded {EPHEMERIS_FILE}")
-            return True
+            planet = planets[key]
+            astrometric = earth.at(t).observe(planet)
+            apparent = astrometric.apparent()
+            ecliptic = apparent.ecliptic_latlon()
+            lon_deg = ecliptic[1].degrees
+            
+            # Calculate retrograde (simplified)
+            t2 = ts.utc((date_utc - timedelta(days=2)).year, 
+                         (date_utc - timedelta(days=2)).month, 
+                         (date_utc - timedelta(days=2)).day,
+                         date_utc.hour, date_utc.minute, date_utc.second)
+            
+            astrometric2 = earth.at(t2).observe(planet)
+            apparent2 = astrometric2.apparent()
+            ecliptic2 = apparent2.ecliptic_latlon()
+            lon_deg2 = ecliptic2[1].degrees
+            
+            # Calculate retrograde
+            diff = (lon_deg - lon_deg2) % 360
+            if diff > 180:
+                diff -= 360
+            retro = diff < 0
+            
+            results.append({
+                "name": name,
+                "sign": get_zodiac_sign(lon_deg),
+                "degree": round(lon_deg % 30, 2),
+                "absolute_degree": round(lon_deg, 2),
+                "retrograde": retro,
+                "house": get_house(lon_deg)
+            })
         except Exception as e:
-            logging.error(f"Failed to download ephemeris file: {str(e)}")
-            return False
-    logging.info(f"Ephemeris file {EPHEMERIS_FILE} already exists")
-    return True
-
-# Try to download the ephemeris file
-if not download_ephemeris():
-    logging.error("Could not download ephemeris file. Using built-in ephemeris.")
-
-PLANET_NAMES = {
-    "sun": "Güneş", "moon": "Ay", "mercury": "Merkür", "venus": "Venüs", "mars": "Mars",
-    "jupiter": "Jüpiter", "saturn": "Satürn", "uranus": "Uranüs", "neptune": "Neptün", "pluto": "Plüton"
-}
+            logging.error(f"Error calculating position for {key}: {str(e)}")
+            # Add placeholder data
+            results.append({
+                "name": name,
+                "sign": "Unknown",
+                "degree": 0,
+                "absolute_degree": 0,
+                "retrograde": False,
+                "house": 1,
+                "error": str(e)
+            })
+    
+    return results
 
 ZODIAC_SIGNS = [
     "Koç", "Boğa", "İkizler", "Yengeç", "Aslan", "Başak",
@@ -68,10 +117,12 @@ def find_aspects(planets):
     result = []
     tolerance = 6
     for i, p1 in enumerate(planets):
+        if "error" in p1:  # Skip planets with errors
+            continue
         for j, p2 in enumerate(planets):
-            if i >= j:
+            if i >= j or "error" in p2:
                 continue
-            diff = angle_difference(p1["degree"], p2["degree"])
+            diff = angle_difference(p1["absolute_degree"], p2["absolute_degree"])
             for name, target in ASPECTS.items():
                 if abs(diff - target) <= tolerance:
                     result.append({
@@ -130,90 +181,20 @@ def natal_chart():
         
         logging.info(f"Converted to UTC: {dt_utc}")
         
-        # Validate if date is within ephemeris range (add some safety margin)
-        if dt_utc.year < 1850 or dt_utc.year > 2050:
-            return jsonify({"error": f"Date {date} is outside valid range (1850-2050)"}), 400
+        # Calculate the chart using our safer method
+        chart_data = calculate_planetary_positions(dt_utc)
         
-        # Load timescale and ephemeris
-        try:
-            ts = load.timescale()
-            t = ts.utc(dt_utc.year, dt_utc.month, dt_utc.day, 
-                       dt_utc.hour, dt_utc.minute, dt_utc.second)
-            
-            # Try to load ephemeris file, fall back to built-in if needed
-            try:
-                eph = load(EPHEMERIS_FILE)
-                logging.info(f"Successfully loaded ephemeris file {EPHEMERIS_FILE}")
-            except Exception as eph_error:
-                logging.warning(f"Error loading ephemeris file, falling back to built-in: {str(eph_error)}")
-                eph = load('de421.bsp')  # Use a built-in ephemeris as fallback
-            
-            # Create observer location
-            observer = wgs84.latlon(latitude_degrees=lat, longitude_degrees=lon)
-            
-            planet_keys = ["sun", "moon", "mercury", "venus", "mars", "jupiter", "saturn"]
-            chart = []
-            
-            for key in planet_keys:
-                try:
-                    if key in eph:
-                        body = eph[key]
-                    else:
-                        # Some ephemeris files name planets differently
-                        alternative_names = {
-                            "sun": "sun",
-                            "moon": "moon",
-                            "mercury": "mercury barycenter",
-                            "venus": "venus barycenter",
-                            "mars": "mars barycenter",
-                            "jupiter": "jupiter barycenter",
-                            "saturn": "saturn barycenter"
-                        }
-                        body = eph[alternative_names.get(key, key)]
-                    
-                    # Calculate position
-                    astrometric = eph["earth"].at(t).observe(body).apparent()
-                    lon_deg = astrometric.ecliptic_latlon()[1].degrees
-                    
-                    # Calculate retrograde status
-                    prev_time = ts.utc((dt_utc - timedelta(days=1)).timetuple()[:6])
-                    prev_astrometric = eph["earth"].at(prev_time).observe(body).apparent()
-                    prev_lon = prev_astrometric.ecliptic_latlon()[1].degrees
-                    
-                    # Properly handle retrograde calculation
-                    # A planet is retrograde if it appears to move backward in the sky
-                    lon_diff = (lon_deg - prev_lon) % 360
-                    if lon_diff > 180:
-                        lon_diff -= 360
-                    retro = lon_diff < 0
-                    
-                    chart.append({
-                        "name": PLANET_NAMES[key],
-                        "sign": get_zodiac_sign(lon_deg),
-                        "degree": round(lon_deg % 30, 2),
-                        "absolute_degree": round(lon_deg, 2),
-                        "retrograde": retro,
-                        "house": get_house(lon_deg)
-                    })
-                except Exception as planet_error:
-                    logging.error(f"Error calculating position for {key}: {str(planet_error)}")
-                    # Skip this planet if calculation fails
-                    continue
-            
-            aspects = find_aspects(chart)
-            
-            return jsonify({
-                "chart": chart,
-                "aspects": aspects,
-                "date": date,
-                "time": time,
-                "timezone": tz_raw,
-                "location": {"lat": lat, "lon": lon}
-            })
-            
-        except Exception as e:
-            logging.error(f"Error in skyfield calculations: {str(e)}")
-            return jsonify({"error": f"Calculation error: {str(e)}"}), 500
+        # Calculate aspects
+        aspects = find_aspects(chart_data)
+        
+        return jsonify({
+            "chart": chart_data,
+            "aspects": aspects,
+            "date": date,
+            "time": time,
+            "timezone": tz_raw,
+            "location": {"lat": lat, "lon": lon}
+        })
             
     except Exception as e:
         logging.error(f"General error in natal_chart: {str(e)}")
@@ -297,7 +278,6 @@ def health_check():
     """Health check endpoint to verify the API is running properly"""
     return jsonify({
         "status": "ok",
-        "ephemeris_available": os.path.exists(EPHEMERIS_FILE),
         "timestamp": datetime.now().isoformat()
     })
 
