@@ -93,21 +93,26 @@ def natal_chart():
     try:
         data = request.json
 
-        date = data.get("date")            # "1994-09-15"
-        time = data.get("time")            # "15:30"
-        lat = str(float(data.get("lat")))  # "41.0082"
-        lon = str(float(data.get("lon")))  # "28.9784"
-        tz_raw = data.get("tz", "+03:00")  # "+03:00"
+        date = data.get("date")         # "1994-09-15"
+        time = data.get("time")         # "15:30"
+        lat = float(data.get("lat"))    # 41.0082
+        lon = float(data.get("lon"))    # 28.9784
+        tz_raw = data.get("tz", "+03:00")
 
-        # Saat dilimini ayıkla
+        # Saat dilimini düzelt
         if isinstance(tz_raw, str) and ":" in tz_raw:
             tz = int(tz_raw.replace("+", "").split(":")[0])
         else:
-            tz = int(float(tz_raw))
+            tz = int(str(tz_raw).replace("+", ""))
 
-        # GeoPos doğru decimal string formatı alır
-        location = GeoPos(lat, lon)
+        # Flatlib dostu GeoPos formatı
+        lat_str = f"{abs(lat):.4f}" + ("N" if lat >= 0 else "S")
+        lon_str = f"{abs(lon):.4f}" + ("E" if lon >= 0 else "W")
+        location = GeoPos(lat_str, lon_str)
+
+        # Flatlib tarih-zaman objesi
         dt = Datetime(date, time, tz)
+
         chart = Chart(dt, location)
 
         planets = [
