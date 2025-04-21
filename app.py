@@ -99,20 +99,24 @@ def natal_chart():
         lon = float(data.get("lon"))    # 28.9784
         tz_raw = data.get("tz", "+03:00")
 
-        # Saat dilimini düzelt
+        # Timezone'ı düzelt
         if isinstance(tz_raw, str) and ":" in tz_raw:
             tz = int(tz_raw.replace("+", "").split(":")[0])
         else:
             tz = int(str(tz_raw).replace("+", ""))
 
-        # Flatlib dostu GeoPos formatı
-        lat_str = f"{abs(lat):.4f}" + ("N" if lat >= 0 else "S")
-        lon_str = f"{abs(lon):.4f}" + ("E" if lon >= 0 else "W")
+        # GeoPos formatı: derece + dakika + yön
+        def to_deg_min(value, positive_dir, negative_dir):
+            deg = int(abs(value))
+            minutes = int((abs(value) - deg) * 60)
+            direction = positive_dir if value >= 0 else negative_dir
+            return f"{deg}°{minutes}'{direction}"
+
+        lat_str = to_deg_min(lat, "N", "S")
+        lon_str = to_deg_min(lon, "E", "W")
+
         location = GeoPos(lat_str, lon_str)
-
-        # Flatlib tarih-zaman objesi
         dt = Datetime(date, time, tz)
-
         chart = Chart(dt, location)
 
         planets = [
