@@ -2,16 +2,14 @@ from flask import Flask, jsonify, request
 import os
 import requests
 from openai import OpenAI
+from datetime import datetime, timedelta, timezone
 from skyfield.api import load, Topos
-from skyfield.api import N, E, wgs84
-from skyfield.api import Star
-from datetime import datetime, timedelta
-import pytz
 
 app = Flask(__name__)
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-# 1. Horoscope App API (İngilizce)
+# ---------- Günlük Burç Yorumları ----------
+
 def fetch_from_horoscope_app_api(sign):
     try:
         url = f"https://horoscope-app-api.vercel.app/api/v1/get-horoscope/daily?sign={sign}&day=today"
@@ -23,7 +21,6 @@ def fetch_from_horoscope_app_api(sign):
         return None, None
     return None, None
 
-# 2. Aztro API (İngilizce)
 def fetch_from_aztro_api(sign):
     try:
         url = f"https://aztro.sameerkumar.website/?sign={sign}&day=today"
@@ -35,7 +32,6 @@ def fetch_from_aztro_api(sign):
         return None, None
     return None, None
 
-# 3. Türkçe kaynak
 def fetch_from_burc_yorumlari(sign):
     try:
         url = f"https://burc-yorumlari.vercel.app/get/{sign.lower()}"
@@ -60,7 +56,7 @@ def get_translated_horoscope(sign):
                 break
 
         if not text:
-            return jsonify({"error": "No horoscope data returned from any provider."}), 400
+            return jsonify({"error": "No horoscope data found."}), 400
 
         if lang == "tr":
             return jsonify({
@@ -76,7 +72,6 @@ def get_translated_horoscope(sign):
                 {"role": "user", "content": f"Translate this horoscope to Turkish:\n\n{text}"}
             ]
         )
-
         translated = response.choices[0].message.content
 
         return jsonify({
@@ -88,71 +83,69 @@ def get_translated_horoscope(sign):
     except Exception as e:
         return jsonify({"error": f"Translation failed: {str(e)}"}), 500
 
+# ---------- Doğum Haritası ----------
+
 @app.route("/natal-chart", methods=["POST"])
 def natal_chart():
     try:
         data = request.json
-        date = data.get("date")      # e.g., "1994-09-15"
-        time = data.get("time")      # e.g., "15:30"
-        lat = float(data.get("lat")) # 41.0082
-        lon = float(data.get("lon")) # 28.9784
-        tz_str = data.get("tz", "+03:00")  # e.g., "+03:00"
+        date = data.get("date")
+        time = data.get("time")
+        lat = float(data.get("lat"))
+        lon = float(data.get("lon"))
+        tz_offset = data.get("tz", "+03:00")
 
-        # Zaman dilimi hesapla
-        offset_hours = int(tz_str.replace(":", "").replace("+", "").replace("-", ""))
-        if "-" in tz_str:
-            offset_hours = -offset_hours
-        tz = pytz.FixedOffset(offset_hours * 60)
+        # Saat dilimini çöz
+        sign = 1 if '+' in tz_offset else -1
+        hours = int(tz_offset[1:3])
+        minutes = int(tz_offset[4:6])
+        offset = timedelta(hours=sign * hours, minutes=sign * minutes)
+        tz = timezone(offset)
 
-        dt_local = tz.localize(datetime.strptime(f"{date} {time}", "%Y-%m-%d %H:%M"))
+        dt = datetime.strptime(f"{date} {time}", "%Y-%m-%d %H:%M").replace(tzinfo=tz)
         ts = load.timescale()
-        t = ts.from_datetime(dt_local)
+        t = ts.from_datetime(dt)
 
         eph = load('de421.bsp')
-        earth = eph["earth"]
-        observer = earth + Topos(latitude_degrees=lat, longitude_degrees=lon)
+        observer = eph['earth'] + Topos(latitude_degrees=lat, longitude_degrees=lon)
 
-        bodies = {
-            "Sun": eph["sun"],
-            "Moon": eph["moon"],
-            "Mercury": eph["mercury"],
-            "Venus": eph["venus"],
-            "Mars": eph["mars"],
-            "Jupiter": eph["jupiter barycenter"],
-            "Saturn": eph["saturn barycenter"],
-            "Uranus": eph["uranus barycenter"],
-            "Neptune": eph["neptune barycenter"],
-            "Pluto": eph["pluto barycenter"]
-        }
-
-        zodiac = [
-            "Aries", "Taurus", "Gemini", "Cancer", "Leo", "Virgo",
-            "Libra", "Scorpio", "Sagittarius", "Capricorn", "Aquarius", "Pisces"
+        planet_keys = [
+            "sun", "moon", "mercury", "venus", "mars",
+            "jupiter barycenter", "saturn barycenter",
+            "uranus barycenter", "neptune barycenter", "pluto barycenter"
         ]
 
-        results = []
-        for name, body in bodies.items():
+        planet_names = {
+            "sun": "Güneş", "moon": "Ay", "mercury": "Merkür", "venus": "Venüs", "mars": "Mars",
+            "jupiter barycenter": "Jüpiter", "saturn barycenter": "Satürn", "uranus barycenter": "Uranüs",
+            "neptune barycenter": "Neptün", "pluto barycenter": "Plüton"
+        }
+
+        zodiac_signs = [
+            "Koç", "Boğa", "İkizler", "Yengeç", "Aslan", "Başak",
+            "Terazi", "Akrep", "Yay", "Oğlak", "Kova", "Balık"
+        ]
+
+        chart = []
+        for key in planet_keys:
+            body = eph[key]
             astrometric = observer.at(t).observe(body).apparent()
-            ra, dec, distance = astrometric.radec()
-            eclip = astrometric.ecliptic_latlon()
-            lon_deg = eclip[1].degrees
-            retrograde = observer.at(t).observe(body).apparent().velocity.km_per_s < 0
+            lon = astrometric.ecliptic_latlon()[1].degrees
+            sign_index = int(lon / 30) % 12
+            retro = lon < observer.at(t - timedelta(days=1)).observe(body).apparent().ecliptic_latlon()[1].degrees
 
-            sign_index = int((lon_deg % 360) / 30)
-            sign = zodiac[sign_index]
-
-            results.append({
-                "name": name,
-                "sign": sign,
-                "degree": round(lon_deg % 30, 2),
-                "retrograde": retrograde
+            chart.append({
+                "name": planet_names[key],
+                "sign": zodiac_signs[sign_index],
+                "degree": round(lon % 30, 2),
+                "retrograde": retro
             })
 
         return jsonify({
-            "chart": results,
+            "chart": chart,
             "date": date,
             "time": time,
-            "timezone": tz_str
+            "timezone": tz_offset
         })
 
     except Exception as e:
