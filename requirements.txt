@@ -6,3 +6,4 @@ flatlib
 skyfield
 pytz
 timezonefinder
+pandas
