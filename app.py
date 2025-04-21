@@ -94,19 +94,19 @@ def natal_chart():
         date = data.get("date")  # Örn: "1994-09-15"
         time = data.get("time")  # Örn: "15:30"
         
-        # String olarak gelen değerleri float'a dönüştür
-        lat = float(str(data.get("lat", "0")).replace(",", "."))
-        lon = float(str(data.get("lon", "0")).replace(",", "."))
+        # Enlem ve boylam değerlerini SADECE string olarak al
+        lat_str = str(data.get("lat"))
+        lon_str = str(data.get("lon"))
         
         # Tz string olarak gelirse +03:00 veya "3" gibi, int'e çevrilir
         tz_raw = data.get("tz", "+03:00")
         if isinstance(tz_raw, str) and ":" in tz_raw:
             tz = int(tz_raw.replace("+", "").split(":")[0])
         else:
-            tz = int(float(str(tz_raw)))
-            
-        # GeoPos için string formatında enlem ve boylam değerleri
-        location = GeoPos(f"{lat:.4f}", f"{lon:.4f}")
+            tz = int(str(tz_raw).replace("+", ""))
+        
+        # GeoPos için doğrudan string olarak gönder, sayıya dönüştürme
+        location = GeoPos(lat_str, lon_str)
         dt = Datetime(date, time, tz)
         chart = Chart(dt, location)
         planets = [
@@ -132,7 +132,6 @@ def natal_chart():
         })
     except Exception as e:
         return jsonify({"error": str(e)}), 400
-
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
