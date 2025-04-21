@@ -138,7 +138,7 @@ def natal_chart():
                 "name": planet_names[key],
                 "sign": zodiac_signs[sign_index],
                 "degree": round(lon % 30, 2),
-                "retrograde": retro
+                "retrograde": bool(retro)
             })
 
         return jsonify({
