@@ -94,9 +94,9 @@ def natal_chart():
         date = data.get("date")  # Örn: "1994-09-15"
         time = data.get("time")  # Örn: "15:30"
         
-        # Enlem ve boylam değerlerini SADECE string olarak al
-        lat_str = str(data.get("lat"))
-        lon_str = str(data.get("lon"))
+        # Enlem ve boylam değerlerini düzgün formatta hazırla
+        lat = data.get("lat")
+        lon = data.get("lon")
         
         # Tz string olarak gelirse +03:00 veya "3" gibi, int'e çevrilir
         tz_raw = data.get("tz", "+03:00")
@@ -105,7 +105,20 @@ def natal_chart():
         else:
             tz = int(str(tz_raw).replace("+", ""))
         
-        # GeoPos için doğrudan string olarak gönder, sayıya dönüştürme
+        # GeoPos için değerleri tam sayı ve ondalık olarak ayırın
+        lat_deg = int(float(lat))
+        lat_min = int((float(lat) - lat_deg) * 60)
+        lon_deg = int(float(lon))
+        lon_min = int((float(lon) - lon_deg) * 60)
+        
+        # Doğu/batı, kuzey/güney belirle
+        lat_ns = "N" if float(lat) >= 0 else "S"
+        lon_ew = "E" if float(lon) >= 0 else "W"
+        
+        # GeoPos formatına dönüştür: derece°dakika'yön
+        lat_str = f"{abs(lat_deg)}°{lat_min}'{lat_ns}"
+        lon_str = f"{abs(lon_deg)}°{lon_min}'{lon_ew}"
+        
         location = GeoPos(lat_str, lon_str)
         dt = Datetime(date, time, tz)
         chart = Chart(dt, location)
