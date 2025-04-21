@@ -1,3 +1,4 @@
+
 from flask import Flask, request, jsonify
 from openai import OpenAI
 from skyfield.api import load, Topos
@@ -5,14 +6,18 @@ from datetime import datetime, timedelta
 import os
 import requests
 import logging
+import json
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 app = Flask(__name__)
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+# Load timescale once at startup
 ts = load.timescale()
 
+# Planet and zodiac data
 ZODIAC_SIGNS = [
     "Koç", "Boğa", "İkizler", "Yengeç", "Aslan", "Başak",
     "Terazi", "Akrep", "Yay", "Oğlak", "Kova", "Balık"
@@ -27,15 +32,25 @@ ASPECTS = {
 }
 
 PLANET_MAPPINGS = {
-    'MERCURY BARYCENTER': 'Merkür', 'VENUS BARYCENTER': 'Venüs', 'EARTH BARYCENTER': 'Dünya',
-    'MARS BARYCENTER': 'Mars', 'JUPITER BARYCENTER': 'Jüpiter', 'SATURN BARYCENTER': 'Satürn',
-    'SUN': 'Güneş', 'MOON': 'Ay',
-    'MERCURY': 'Merkür', 'VENUS': 'Venüs', 'EARTH': 'Dünya',
-    'MARS': 'Mars', 'JUPITER': 'Jüpiter', 'SATURN': 'Satürn'
+    'MERCURY BARYCENTER': 'Merkür',
+    'VENUS BARYCENTER': 'Venüs',
+    'EARTH BARYCENTER': 'Dünya',
+    'MARS BARYCENTER': 'Mars',
+    'JUPITER BARYCENTER': 'Jüpiter',
+    'SATURN BARYCENTER': 'Satürn',
+    'SUN': 'Güneş',
+    'MOON': 'Ay',
+    'MERCURY': 'Merkür',
+    'VENUS': 'Venüs',
+    'EARTH': 'Dünya',
+    'MARS': 'Mars',
+    'JUPITER': 'Jüpiter',
+    'SATURN': 'Satürn'
 }
 
 def get_zodiac_sign(degree):
-    return ZODIAC_SIGNS[int(degree // 30) % 12]
+    index = int(degree // 30) % 12
+    return ZODIAC_SIGNS[index]
 
 def get_house(degree):
     return int(degree // 30) + 1
@@ -73,65 +88,74 @@ def parse_timezone(tz_raw):
 def calculate_chart(date_utc):
     try:
         eph = load('de440s.bsp')
-        t = ts.utc(date_utc.year, date_utc.month, date_utc.day, date_utc.hour, date_utc.minute, date_utc.second)
-        available_targets = [str(target) for target in eph.targets()]
         planet_map = {}
-        for target in available_targets:
+        for target in eph.targets():
             for key, value in PLANET_MAPPINGS.items():
                 if key in target:
                     planet_map[target] = value
                     break
-
-        earth_key = next((k for k in available_targets if 'EARTH' in k), None)
-        if not earth_key:
-            raise ValueError("Earth not found")
-        earth = eph[earth_key]
-
         results = []
-        for target_key, name in planet_map.items():
-            if target_key == earth_key: continue
+        earth_key = next(key for key in eph.targets() if "EARTH" in key)
+        earth = eph[earth_key]
+        t = ts.utc(date_utc.year, date_utc.month, date_utc.day, date_utc.hour, date_utc.minute, date_utc.second)
+        for target_key, planet_name in planet_map.items():
+            if target_key == earth_key:
+                continue
             try:
                 body = eph[target_key]
                 astrometric = earth.at(t).observe(body)
-                lon = astrometric.apparent().ecliptic_latlon()[1].degrees
-                t2 = ts.utc((date_utc - timedelta(days=2)).year, (date_utc - timedelta(days=2)).month,
-                            (date_utc - timedelta(days=2)).day, date_utc.hour, date_utc.minute, date_utc.second)
-                lon2 = earth.at(t2).observe(body).apparent().ecliptic_latlon()[1].degrees
-                is_retrograde = ((lon - lon2 + 360) % 360) > 180
+                apparent = astrometric.apparent()
+                ecliptic = apparent.ecliptic_latlon()
+                lon_deg = ecliptic[1].degrees
+                t2 = ts.utc((date_utc - timedelta(days=2)).year,
+                            (date_utc - timedelta(days=2)).month,
+                            (date_utc - timedelta(days=2)).day,
+                            date_utc.hour, date_utc.minute, date_utc.second)
+                lon_deg2 = earth.at(t2).observe(body).apparent().ecliptic_latlon()[1].degrees
+                diff = (lon_deg - lon_deg2) % 360
+                if diff > 180: diff -= 360
+                is_retrograde = diff < 0
                 results.append({
-                    "name": name,
-                    "sign": get_zodiac_sign(lon),
-                    "degree": round(lon % 30, 2),
-                    "absolute_degree": round(lon, 2),
-                    "retrograde": str(is_retrograde).lower(),
-                    "house": get_house(lon)
+                    "name": planet_name,
+                    "sign": get_zodiac_sign(lon_deg),
+                    "degree": round(lon_deg % 30, 2),
+                    "absolute_degree": round(lon_deg, 2),
+                    "retrograde": "true" if is_retrograde else "false",
+                    "house": get_house(lon_deg)
                 })
             except Exception as e:
                 results.append({
-                    "name": name, "sign": "Unknown", "degree": 0,
-                    "absolute_degree": 0, "retrograde": "false", "house": 1,
+                    "name": planet_name,
+                    "sign": "Unknown",
+                    "degree": 0,
+                    "absolute_degree": 0,
+                    "retrograde": "false",
+                    "house": 1,
                     "error": str(e)
                 })
         return results
-    except Exception as e:
+    except Exception:
         return []
 
 @app.route("/natal-chart", methods=["POST"])
 def natal_chart():
     try:
         data = request.json
-        date, time = data.get("date"), data.get("time")
-        lat, lon = float(data.get("lat")), float(data.get("lon"))
+        date = data.get("date")
+        time = data.get("time")
+        lat = float(data.get("lat"))
+        lon = float(data.get("lon"))
         tz_raw = data.get("tz", "+00:00")
         tz_hours = parse_timezone(tz_raw)
         dt_local = datetime.fromisoformat(f"{date}T{time}:00")
         dt_utc = dt_local - timedelta(hours=tz_hours)
-        chart = calculate_chart(dt_utc)
-        aspects = find_aspects(chart)
+        chart_data = calculate_chart(dt_utc)
+        aspects = find_aspects(chart_data)
         return jsonify({
-            "chart": chart,
+            "chart": chart_data,
             "aspects": aspects,
-            "date": date, "time": time,
+            "date": date,
+            "time": time,
             "timezone": tz_raw,
             "location": {"lat": lat, "lon": lon}
         })
@@ -146,7 +170,8 @@ def fetch_from_burc_yorumlari(sign):
             data = response.json()
             if isinstance(data, list) and data:
                 return data[0].get("GunlukYorum"), "tr"
-    except: pass
+    except:
+        return None, None
     return None, None
 
 def fetch_from_aztro(sign):
@@ -156,7 +181,8 @@ def fetch_from_aztro(sign):
         if response.status_code == 200:
             data = response.json()
             return data.get("description"), "en"
-    except: pass
+    except:
+        return None, None
     return None, None
 
 @app.route("/translated-horoscope/<sign>", methods=["GET"])
@@ -164,71 +190,29 @@ def get_translated_horoscope(sign):
     try:
         sources = [fetch_from_burc_yorumlari, fetch_from_aztro]
         text, lang = None, None
-
         for source in sources:
             text, lang = source(sign)
             if text:
                 break
-
-        # If all sources failed, generate a fallback horoscope
         if not text:
-            logging.warning("All horoscope sources failed, generating fallback")
-            try:
-                # Generate a horoscope with OpenAI as fallback
-                response = client.chat.completions.create(
-                    model="gpt-3.5-turbo",
-                    messages=[
-                        {"role": "system", "content": "You are an astrologer who writes brief daily horoscopes in Turkish."},
-                        {"role": "user", "content": f"Write a short daily horoscope for {sign} in Turkish. Keep it positive and around 3-4 sentences."}
-                    ]
-                )
-                text = response.choices[0].message.content
-                lang = "tr"
-            except Exception as e:
-                logging.error(f"Fallback generation failed: {str(e)}")
-                # Last resort fallback
-                text = f"{sign.title()} burcu için bugün yeni başlangıçlar yapma ve kendini keşfetme zamanı. Enerjin yüksek, fırsatları değerlendir. Sevdiklerinle vakit geçirmek için güzel bir gün."
-                lang = "tr"
-
+            return jsonify({"error": "No horoscope data found."}), 400
         if lang == "tr":
-            return jsonify({
-                "sign": sign.title(),
-                "original": text,
-                "translated": text,
-                "source": "fallback" if not any(source(sign)[0] for source in sources) else "api"
-            })
-
-        # Only translate if needed
-        try:
-            response = client.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=[
-                    {"role": "system", "content": "You are a helpful assistant who translates astrology texts into Turkish."},
-                    {"role": "user", "content": f"Translate this horoscope to Turkish:\n\n{text}"}
-                ]
-            )
-            translated = response.choices[0].message.content
-        except Exception as e:
-            logging.error(f"Translation error: {str(e)}")
-            # If translation fails, return original text
-            translated = f"(Translation failed) {text}"
-
-        return jsonify({
-            "sign": sign.title(),
-            "original": text,
-            "translated": translated,
-            "source": "api"
-        })
+            return jsonify({"sign": sign.title(), "original": text, "translated": text})
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant who translates astrology texts into Turkish."},
+                {"role": "user", "content": f"Translate this horoscope to Turkish:\n\n{text}"}
+            ]
+        )
+        translated = response.choices[0].message.content
+        return jsonify({"sign": sign.title(), "original": text, "translated": translated})
     except Exception as e:
-        logging.error(f"Error in translated-horoscope: {str(e)}")
         return jsonify({"error": f"Translation failed: {str(e)}"}), 500
 
 @app.route("/health", methods=["GET"])
 def health_check():
-    return jsonify({
-        "status": "ok",
-        "timestamp": datetime.now().isoformat()
-    })
+    return jsonify({"status": "ok", "timestamp": datetime.now().isoformat()})
 
 if __name__ == "__main__":
     from waitress import serve
