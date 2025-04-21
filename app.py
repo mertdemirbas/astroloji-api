@@ -1,15 +1,22 @@
 from flask import Flask, request, jsonify
-from openai import OpenAI
-from skyfield.api import load, Topos
-from skyfield.api import Loader
-from datetime import datetime, timedelta, timezone
+from skyfield.api import load, Topos, Loader
+from datetime import datetime, timedelta
 import os
 import requests
-import math
+from openai import OpenAI
 
+# Flask app
 app = Flask(__name__)
+
+# OpenAI istemcisi
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
+# Skyfield loader ile runtime'da indirme
+skyfield_loader = Loader('./skyfield_data')
+eph = skyfield_loader('de440s.bsp')
+ts = skyfield_loader.timescale()
+
+# Gezegenler ve burçlar
 PLANET_NAMES = {
     "sun": "Güneş", "moon": "Ay", "mercury": "Merkür", "venus": "Venüs", "mars": "Mars",
     "jupiter": "Jüpiter", "saturn": "Satürn", "uranus": "Uranüs", "neptune": "Neptün", "pluto": "Plüton"
@@ -27,6 +34,7 @@ ASPECTS = {
     "Trine": 120,
     "Sextile": 60
 }
+
 
 def get_zodiac_sign(degree):
     index = int(degree // 30) % 12
@@ -56,6 +64,7 @@ def find_aspects(planets):
                     })
     return result
 
+
 @app.route("/natal-chart", methods=["POST"])
 def natal_chart():
     try:
@@ -66,19 +75,13 @@ def natal_chart():
         lon = float(data.get("lon"))
         tz_offset = data.get("tz", "+03:00")
 
+        # Zaman dönüşümü UTC'ye
         dt = datetime.fromisoformat(f"{date}T{time}:00")
-        offset_hours = int(tz_offset.replace(":", "").replace("+", "")) // 100
+        offset_hours = int(tz_offset.replace("+", "").replace(":", ""))
         dt_utc = dt - timedelta(hours=offset_hours)
 
-        # Ephemeris setup
-        eph_path = "de440s.bsp"
-        load_path = Loader(".")
-        if not os.path.exists(eph_path):
-            load_path.download("https://naif.jpl.nasa.gov/pub/naif/generic_kernels/spk/planets/de440s.bsp")
-        eph = load_path(eph_path)
-
-        ts = load.timescale()
         t = ts.utc(dt_utc.year, dt_utc.month, dt_utc.day, dt_utc.hour, dt_utc.minute)
+        observer = Topos(latitude_degrees=lat, longitude_degrees=lon)
 
         planet_keys = ["sun", "moon", "mercury", "venus", "mars", "jupiter", "saturn", "uranus", "neptune", "pluto"]
         chart = []
@@ -87,8 +90,8 @@ def natal_chart():
             body = eph[key]
             astrometric = eph["earth"].at(t).observe(body).apparent()
             lon_deg = astrometric.ecliptic_latlon()[1].degrees
-            lon_prev = eph["earth"].at(t - timedelta(days=1)).observe(body).apparent().ecliptic_latlon()[1].degrees
-            retro = lon_deg < lon_prev
+            prev_lon_deg = eph["earth"].at(t - timedelta(days=1)).observe(body).apparent().ecliptic_latlon()[1].degrees
+            retro = lon_deg < prev_lon_deg
 
             chart.append({
                 "name": PLANET_NAMES[key],
@@ -111,7 +114,7 @@ def natal_chart():
     except Exception as e:
         return jsonify({"error": str(e)}), 400
 
-# Günlük burç yorumları
+# Günlük burç yorumu kaynakları
 def fetch_from_burc_yorumlari(sign):
     try:
         url = f"https://burc-yorumlari.vercel.app/get/{sign.lower()}"
@@ -173,6 +176,7 @@ def get_translated_horoscope(sign):
     except Exception as e:
         return jsonify({"error": f"Translation failed: {str(e)}"}), 500
 
+# Prod ortamı için
 if __name__ == "__main__":
     from waitress import serve
     port = int(os.environ.get("PORT", 5000))
