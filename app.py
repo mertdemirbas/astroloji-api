@@ -1,12 +1,10 @@
+
 from flask import Flask, request, jsonify
 from openai import OpenAI
 from skyfield.api import load, Topos
-from skyfield.api import N, E
-from skyfield.almanac import find_discrete, risings_and_settings
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 import os
 import requests
-import math
 
 app = Flask(__name__)
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
@@ -42,8 +40,7 @@ def angle_difference(a1, a2):
 
 def find_aspects(planets):
     result = []
-    tolerance = 6  # orb
-
+    tolerance = 6
     for i, p1 in enumerate(planets):
         for j, p2 in enumerate(planets):
             if i >= j:
@@ -78,21 +75,33 @@ def natal_chart():
         eph = load("de421.bsp")
         observer = Topos(latitude_degrees=lat, longitude_degrees=lon)
 
-        planet_keys = ["sun", "moon", "mercury", "venus", "mars", "jupiter", "saturn", "uranus", "neptune", "pluto"]
+        planet_keys = {
+            "sun": "sun",
+            "moon": "moon",
+            "mercury": "mercury",
+            "venus": "venus barycenter",
+            "mars": "mars barycenter",
+            "jupiter": "jupiter barycenter",
+            "saturn": "saturn barycenter",
+            "uranus": "uranus barycenter",
+            "neptune": "neptune barycenter",
+            "pluto": "pluto barycenter"
+        }
+
         chart = []
 
-        for key in planet_keys:
-            body = eph[key]
+        for key, eph_key in planet_keys.items():
+            body = eph[eph_key]
             astrometric = eph["earth"].at(t).observe(body).apparent()
-            lon = astrometric.ecliptic_latlon()[1].degrees
-            retro = lon > eph["earth"].at(t - timedelta(days=1)).observe(body).apparent().ecliptic_latlon()[1].degrees
+            lon_deg = astrometric.ecliptic_latlon()[1].degrees
+            retro = lon_deg > eph["earth"].at(t - timedelta(days=1)).observe(body).apparent().ecliptic_latlon()[1].degrees
 
             chart.append({
                 "name": PLANET_NAMES[key],
-                "sign": get_zodiac_sign(lon),
-                "degree": round(lon % 30, 2),
-                "retrograde": retro,
-                "house": get_house(lon)
+                "sign": get_zodiac_sign(lon_deg),
+                "degree": round(lon_deg % 30, 2),
+                "retrograde": bool(retro),
+                "house": get_house(lon_deg)
             })
 
         aspects = find_aspects(chart)
@@ -174,4 +183,3 @@ if __name__ == "__main__":
     from waitress import serve
     port = int(os.environ.get("PORT", 5000))
     serve(app, host="0.0.0.0", port=port)
-
