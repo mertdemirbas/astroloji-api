@@ -7,3 +7,4 @@ skyfield
 pytz
 timezonefinder
 pandas
+waitress
