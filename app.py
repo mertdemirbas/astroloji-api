@@ -95,31 +95,28 @@ def get_translated_horoscope(sign):
     })
 
 
-# --- Natal chart hesaplama ---
 @app.route("/natal-chart", methods=["POST"])
 def natal_chart():
     try:
         data = request.json or {}
-        date_raw = data.get("date", "")    # "YYYY-MM-DD"
-        time = data.get("time", "")        # "HH:MM"
-        lat = float(data.get("lat", 0))
-        lon = float(data.get("lon", 0))
+        date_raw = data.get("date", "")    # "1994-09-15"
+        time = data.get("time", "")        # "15:30"
+        lat  = float(data.get("lat",  0))  # 41.0082
+        lon  = float(data.get("lon",  0))  # 28.9784
         tz_raw = data.get("tz", "+00:00")  # "+03:00" veya "3"
 
-        # flatlib’in istediği format: "YYYY/MM/DD"
+        # flatlib’in istediği format: YYYY/MM/DD
         date = date_raw.replace("-", "/")
-
         # timezone’u integer saate dönüştür
         tz = int(tz_raw.split(":")[0]) if ":" in tz_raw else int(tz_raw)
 
-        # GeoPos için lat/lon string
-        pos = GeoPos(str(lat), str(lon))
+        # işte burası değişti:
+        location = GeoPos(lat, lon)
 
-        # Datetime objesi
+        # flatlib datetime
         dt = Datetime(date, time, tz)
 
-        # Chart ve gezegenler
-        chart = Chart(dt, pos)
+        chart = Chart(dt, location)
         bodies = [
             const.SUN, const.MOON, const.MERCURY, const.VENUS,
             const.MARS, const.JUPITER, const.SATURN,
@@ -149,7 +146,6 @@ def natal_chart():
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
