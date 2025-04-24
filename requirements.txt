@@ -1,10 +1,10 @@
 flask
 requests
-openai
 openai>=1.0.0
 flatlib
+pyswisseph
 skyfield
+waitress
+python-dateutil
 pytz
 timezonefinder
-pandas
-waitress
