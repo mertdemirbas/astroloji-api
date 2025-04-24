@@ -1,4 +1,3 @@
-
 from flask import Flask, request, jsonify
 from openai import OpenAI
 from skyfield.api import load, Topos
@@ -9,63 +8,52 @@ import logging
 
 app = Flask(__name__)
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-
-# Logging
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
-
-# Ephemeris file download
-EPHEMERIS_FILE = "de440s.bsp"
-if not os.path.exists(EPHEMERIS_FILE):
-    import urllib.request
-    logging.info("Downloading ephemeris file...")
-    url = "https://naif.jpl.nasa.gov/pub/naif/generic_kernels/spk/planets/de440s.bsp"
-    urllib.request.urlretrieve(url, EPHEMERIS_FILE)
-    logging.info("Ephemeris file downloaded.")
-
-# Skyfield setup
-ts = load.timescale()
-eph = load(EPHEMERIS_FILE)
+logging.basicConfig(level=logging.INFO)
 
 ZODIAC_SIGNS = [
     "Koç", "Boğa", "İkizler", "Yengeç", "Aslan", "Başak",
     "Terazi", "Akrep", "Yay", "Oğlak", "Kova", "Balık"
 ]
-PLANET_KEYS = {
-    "sun": "Güneş", "moon": "Ay", "mercury": "Merkür", "venus": "Venüs",
-    "mars": "Mars", "jupiter": "Jüpiter", "saturn": "Satürn",
-    "uranus": "Uranüs", "neptune": "Neptün", "pluto": "Plüton"
-}
+
 ASPECTS = {
-    "Conjunction": 0, "Opposition": 180,
-    "Square": 90, "Trine": 120, "Sextile": 60
+    "Conjunction": 0,
+    "Opposition": 180,
+    "Square": 90,
+    "Trine": 120,
+    "Sextile": 60
 }
 
-def get_zodiac(degree):
+def get_zodiac_sign(degree):
     return ZODIAC_SIGNS[int(degree // 30) % 12]
 
 def get_house(degree):
     return int(degree // 30) + 1
 
-def angle_diff(a, b):
-    diff = abs(a - b) % 360
-    return diff if diff <= 180 else 360 - diff
+def angle_difference(a1, a2):
+    diff = abs(a1 - a2) % 360
+    return min(diff, 360 - diff)
 
 def find_aspects(planets):
     results = []
-    tolerance = 6
     for i, p1 in enumerate(planets):
         for j, p2 in enumerate(planets):
             if i >= j:
                 continue
-            diff = angle_diff(p1["absolute_degree"], p2["absolute_degree"])
-            for aspect, angle in ASPECTS.items():
-                if abs(diff - angle) <= tolerance:
+            diff = angle_difference(p1["absolute_degree"], p2["absolute_degree"])
+            for name, target in ASPECTS.items():
+                if abs(diff - target) <= 6:
                     results.append({
-                        "between": f"{p1['name']} & {p2['name']}",
-                        "aspect": aspect,
-                        "orb": round(abs(diff - angle), 2)
+                        "between": f'{p1["name"]} & {p2["name"]}',
+                        "aspect": name,
+                        "orb": round(abs(diff - target), 2)
                     })
     return results
+
+def parse_timezone(tz_raw):
+    sign = 1 if tz_raw[0] == '+' else -1
+    hours = int(tz_raw[1:3])
+    minutes = int(tz_raw[4:6]) if len(tz_raw) > 5 else 0
+    return sign * (hours + minutes / 60)
 
 @app.route("/natal-chart", methods=["POST"])
 def natal_chart():
@@ -76,110 +64,114 @@ def natal_chart():
         lat = float(data["lat"])
         lon = float(data["lon"])
         tz = data.get("tz", "+00:00")
-        offset = int(tz.replace(":", "").replace("+", "")) // 100
-        dt = datetime.fromisoformat(f"{date}T{time}") - timedelta(hours=offset)
+        tz_offset = parse_timezone(tz)
+
+        dt = datetime.fromisoformat(f"{date}T{time}:00") - timedelta(hours=tz_offset)
+
+        ts = load.timescale()
+        eph = load('de440s.bsp')
         t = ts.utc(dt.year, dt.month, dt.day, dt.hour, dt.minute)
 
-        chart = []
         earth = eph["earth"]
-        for key in PLANET_KEYS:
-            body = eph[key]
-            pos = earth.at(t).observe(body).apparent()
-            lon_deg = pos.ecliptic_latlon()[1].degrees
-            t2 = ts.utc((dt - timedelta(days=2)).year, (dt - timedelta(days=2)).month,
-                        (dt - timedelta(days=2)).day, dt.hour, dt.minute)
-            lon2 = earth.at(t2).observe(body).apparent().ecliptic_latlon()[1].degrees
-            retrograde = (lon_deg - lon2) % 360 > 180
+        planets = ["sun", "moon", "mercury", "venus", "mars", "jupiter", "saturn"]
+        names = ["Güneş", "Ay", "Merkür", "Venüs", "Mars", "Jüpiter", "Satürn"]
+
+        chart = []
+        for key, name in zip(planets, names):
+            astrometric = earth.at(t).observe(eph[key])
+            ecl = astrometric.apparent().ecliptic_latlon()
+            lon_deg = ecl[1].degrees
             chart.append({
-                "name": PLANET_KEYS[key],
-                "sign": get_zodiac(lon_deg),
+                "name": name,
+                "sign": get_zodiac_sign(lon_deg),
                 "degree": round(lon_deg % 30, 2),
                 "absolute_degree": round(lon_deg, 2),
-                "retrograde": str(retrograde).lower(),
+                "retrograde": "false",
                 "house": get_house(lon_deg)
             })
 
+        aspects = find_aspects(chart)
+
         return jsonify({
             "chart": chart,
-            "aspects": find_aspects(chart),
+            "aspects": aspects,
             "date": date,
             "time": time,
             "timezone": tz,
             "location": {"lat": lat, "lon": lon}
         })
     except Exception as e:
-        logging.error(str(e))
         return jsonify({"error": str(e)}), 400
-
-# Horoscope translation endpoint
-def fetch_from_horoscope_app(sign):
-    try:
-        url = f"https://horoscope-app-api.vercel.app/api/v1/get-horoscope/daily?sign={sign.lower()}&day=today"
-        r = requests.get(url, timeout=5)
-        if r.status_code == 200:
-            return r.json()["data"]["horoscope_data"], "en"
-    except:
-        return None, None
-    return None, None
 
 def fetch_from_aztro(sign):
     try:
-        url = f"https://aztro.sameerkumar.website/?sign={sign.lower()}&day=today"
-        r = requests.post(url, timeout=5)
-        if r.status_code == 200:
-            return r.json()["description"], "en"
+        url = f"https://aztro.sameerkumar.website/?sign={sign}&day=today"
+        response = requests.post(url)
+        if response.status_code == 200:
+            return response.json().get("description"), "en"
     except:
-        return None, None
+        pass
     return None, None
 
-def fetch_from_turkish(sign):
+def fetch_from_horoscope_api(sign):
+    try:
+        url = f"https://horoscope-app-api.vercel.app/api/v1/get-horoscope/daily?sign={sign.lower()}"
+        response = requests.get(url)
+        if response.status_code == 200:
+            data = response.json()
+            return data.get("data", {}).get("horoscope_data", {}).get("daily", {}).get("general", {}).get("description"), "en"
+    except:
+        pass
+    return None, None
+
+def fetch_from_burc_yorumlari(sign):
     try:
         url = f"https://burc-yorumlari.vercel.app/get/{sign.lower()}"
-        r = requests.get(url, timeout=5)
-        if r.status_code == 200:
-            d = r.json()
-            if isinstance(d, list) and d:
-                return d[0].get("GunlukYorum"), "tr"
+        response = requests.get(url)
+        if response.status_code == 200:
+            data = response.json()
+            if isinstance(data, list) and data:
+                return data[0].get("GunlukYorum"), "tr"
     except:
-        return None, None
+        pass
     return None, None
 
 @app.route("/translated-horoscope/<sign>", methods=["GET"])
-def get_translated(sign):
-    try:
-        sources = [fetch_from_horoscope_app, fetch_from_aztro, fetch_from_turkish]
-        text, lang = None, None
-        for src in sources:
-            text, lang = src(sign)
-            if text:
-                break
-        if not text:
-            return jsonify({"error": "No horoscope data available."}), 400
+def get_translated_horoscope(sign):
+    sources = [fetch_from_aztro, fetch_from_horoscope_api, fetch_from_burc_yorumlari]
+    text, lang = None, None
+    for source in sources:
+        text, lang = source(sign)
+        if text:
+            break
 
-        if lang == "tr":
-            return jsonify({"sign": sign.title(), "original": text, "translated": text})
+    if not text:
+        return jsonify({"error": "No horoscope data found."}), 404
 
-        translated = client.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                {"role": "system", "content": "You are a helpful assistant who translates astrology texts into Turkish."},
-                {"role": "user", "content": f"Translate this horoscope to Turkish:
-
-{text}"}
-            ]
-        ).choices[0].message.content
-
+    if lang == "tr":
         return jsonify({
             "sign": sign.title(),
             "original": text,
-            "translated": translated
+            "translated": text
         })
-    except Exception as e:
-        return jsonify({"error": f"Translation failed: {str(e)}"}), 500
 
-@app.route("/health", methods=["GET"])
-def health():
-    return jsonify({"status": "ok"})
+    try:
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant who translates astrology texts into Turkish."},
+                {"role": "user", "content": f"Translate this horoscope to Turkish:\n\n{text}"}
+            ]
+        )
+        translated = response.choices[0].message.content
+    except Exception as e:
+        translated = f"(Translation failed) {text}"
+
+    return jsonify({
+        "sign": sign.title(),
+        "original": text,
+        "translated": translated
+    })
 
 if __name__ == "__main__":
     from waitress import serve
